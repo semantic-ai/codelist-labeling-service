@@ -1,0 +1,1 @@
+apt update && apt install -y git cmake build-essential rustc pkg-config

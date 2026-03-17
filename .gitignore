@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.idea
+
+# Nominatim data
+nominatim-data/
+/config
+/data
+/scripts
+docker-compose.yaml
+docker-compose.dev.yaml
+development.ipynb
+evaluate_translation.py
+projection.ipynb
+config_dev.json
+testing.ipynb

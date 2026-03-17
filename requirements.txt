@@ -1,0 +1,13 @@
+-f https://download.pytorch.org/whl/cpu
+torch
+gitpython
+fire
+scikit-learn
+numpy
+pytz
+openai
+transformers
+datasets
+pydantic>=2.0.0
+fastapi
+
