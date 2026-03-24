@@ -6,7 +6,7 @@ from .ld import build_airo_model_insert_query
 from ..config import get_config
 
 from helpers import update
-from transformers import AutoTokenizer, DataCollatorWithPadding, AutoModelForSequenceClassification, TrainingArguments, Trainer, pipeline
+from transformers import AutoTokenizer, DataCollatorWithPadding, AutoModelForSequenceClassification, TrainingArguments, Trainer
 
 
 def train(

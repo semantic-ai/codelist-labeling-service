@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field, SecretStr, ConfigDict, field_validator
 from typing import Literal
-from functools import partial
 from decide_ai_service_base.config import load_config
 
 

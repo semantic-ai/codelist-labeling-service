@@ -106,7 +106,7 @@ class ModelAnnotatingTask(DecisionTask):
                 AI_COMPONENTS["model_annotater"],
                 AGENT_TYPES["ai_component"]
             )
-            annotation.add_to_triplestore()
+            annotation.add_to_triplestore_if_not_exists()
 
 
 class ModelBatchAnnotatingTask(Task):
