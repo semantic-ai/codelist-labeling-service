@@ -21,11 +21,25 @@ class AppSettingsConfig(BaseModel):
         """Normalize log level to lowercase and strip whitespace."""
         return v.strip().lower() if isinstance(v, str) else v
 
+
+class CodelistConfig(BaseModel):
+    """Configuration for the codelist (concept scheme) to label against."""
+
+    concept_scheme_uri: str = Field(
+        default="http://data.lblod.gift/id/conceptscheme/sdg-simple",
+        description="URI of the SKOS ConceptScheme to fetch concepts from"
+    )
+
+
 class LlmConfig(BaseModel):
     """LLM (Large Language Model) configuration."""
 
+    provider: Literal["openai", "ollama", "random"] = Field(
+        default="ollama",
+        description="LLM provider to use: openai, ollama, or random (for testing)"
+    )
     model_name: str = Field(
-        default="gpt-4o-mini",
+        default="mistral-nemo",
         description="LLM model name"
     )
     temperature: float = Field(
@@ -36,7 +50,16 @@ class LlmConfig(BaseModel):
     )
     api_key: SecretStr | None = Field(
         default=None,
-        description="OpenAI API key"
+        description="API key (used by OpenAI)"
+    )
+    base_url: str = Field(
+        default="http://ollama:11434",
+        description="Base URL for the LLM server (used by Ollama)"
+    )
+    timeout: int = Field(
+        default=120,
+        ge=1,
+        description="Request timeout in seconds (used by Ollama)"
     )
 
 
@@ -77,6 +100,10 @@ class AppConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # Reject extra fields not defined in the model
 
+    codelist: CodelistConfig = Field(
+        default_factory=CodelistConfig,
+        description="Codelist (concept scheme) configuration"
+    )
     llm: LlmConfig = Field(
         default_factory=LlmConfig,
         description="LLM configuration"

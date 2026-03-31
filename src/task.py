@@ -6,9 +6,10 @@ from decide_ai_service_base.task import DecisionTask, Task
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AI_COMPONENTS, AGENT_TYPES, get_prefixes_for_query
 from decide_ai_service_base.annotation import LinkingAnnotation
 
-from .llm_models.llm_model_clients import OpenAIModel
+from .llm_models.llm_model_clients import create_llm_client
 from .llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
 from .classifier.train import train
+from .codelist import CodelistEntry, fetch_codelist, build_label_to_uri_map, resolve_label_to_uri
 from .config import get_config
 
 
@@ -17,7 +18,7 @@ class ModelAnnotatingTask(DecisionTask):
 
     __task_type__ = TASK_OPERATIONS["model_annotation"]
 
-    def __init__(self, task_uri: str, source: str | None = None):
+    def __init__(self, task_uri: str, source: str | None = None, codelist_entries: list[CodelistEntry] | None = None):
         if source is None:
             super().__init__(task_uri)
         else:
@@ -26,10 +27,17 @@ class ModelAnnotatingTask(DecisionTask):
             self.source = source
 
         config = get_config()
-        self._llm_config = {
-            "model_name": config.llm.model_name,
-            "temperature": config.llm.temperature,
-        }
+
+        # Codelist: use provided entries or fetch from triplestore
+        if codelist_entries is not None:
+            self._codelist_entries = codelist_entries
+        else:
+            self._codelist_entries = fetch_codelist(config.codelist.concept_scheme_uri)
+        self._label_to_uri = build_label_to_uri_map(self._codelist_entries)
+
+        # LLM setup
+        self._llm = create_llm_client(config.llm)
+        self._provider = config.llm.provider
 
         self._llm_system_message = "You are a juridical and administrative assistant that must determine the best matching codes from a list with a given text."
         self._llm_user_message = "Determine the best matching codes from the following list for the given public decision.\n\n" \
@@ -41,9 +49,7 @@ class ModelAnnotatingTask(DecisionTask):
             "DECISION TEXT:\n" \
             "{decision_text}\n" \
             "\"\"\"" \
-            "Provide your answer as a list of strings representing the matching codes. Provide all matching codes (can be a single one), but only those that are truly matching and only from the given list!"
-
-        self._llm = OpenAIModel(self._llm_config)
+            "Provide your answer as a list of strings representing the matching codes. Provide all matching codes (can be a single one), but only those that are truly matching and only from the given list! If none of the codes match, return an empty list."
 
     def process(self):
         task_data = self.fetch_data()
@@ -54,55 +60,40 @@ class ModelAnnotatingTask(DecisionTask):
                 "No task data found; skipping model annotation.")
             return
 
-        # TO DO: ADD FUNCTION TO RETRIEVE ACTUAL CODE LIST
-        sdgs = ["SDG-01 No Poverty",
-                "SDG-02 Zero Hunger",
-                "SDG-03 Good Health and Well-Being",
-                "SDG-04 Quality Education",
-                "SDG-05 Gender Equality",
-                "SDG-06 Clean Water and Sanitation",
-                "SDG-07 Affordable and Clean Energy",
-                "SDG-08 Decent Work and Economic Growth",
-                "SDG-09 Industry, Innovation and Infrastructure",
-                "SDG-10 Reduced Inequality",
-                "SDG-11 Sustainable Cities and Communities",
-                "SDG-12 Responsible Consumption and Production",
-                "SDG-13 Climate Action",
-                "SDG-14 Life Below Water",
-                "SDG-15 Life on Land",
-                "SDG-16 Peace, Justice and Strong Institutions",
-                "SDG-17 Partnerships for the Goals"
-                ]
+        labels = [entry.label for entry in self._codelist_entries]
+        if not labels:
+            self.logger.error("No concepts found in codelist; skipping model annotation.")
+            return
 
         classes: list[str] = []
-        config = get_config()
-        api_key = config.llm.api_key.get_secret_value() if config.llm.api_key else None
-        if not api_key:
-            self.logger.warning(
-                "OpenAI API key missing (config.llm.api_key), using dummy SDG label for testing.")
-            classes = [random.choice(sdgs).replace(" ", "_")]
+        if self._provider == "random" or self._llm is None:
+            self.logger.warning("Using random label (provider=random).")
+            classes = [random.choice(labels)]
         else:
             try:
                 llm_input = LlmTaskInput(system_message=self._llm_system_message,
                                          user_message=self._llm_user_message.format(
-                                             code_list=sdgs, decision_text=task_data),
+                                             code_list=labels, decision_text=task_data),
                                          assistant_message=None,
                                          output_format=EntityLinkingTaskOutput)
 
                 response = self._llm(llm_input)
-                classes = [designated_class.replace(
-                    " ", "_") for designated_class in response.designated_classes]
+                classes = response.designated_classes
             except Exception as exc:
                 self.logger.warning(
-                    f"LLM call failed ({exc}); using dummy SDG label for testing.")
-                classes = [random.choice(sdgs).replace(" ", "_")]
+                    f"LLM call failed ({exc}); using random label as fallback.")
+                classes = [random.choice(labels)]
 
         for c in classes:
+            concept_uri = resolve_label_to_uri(c, self._label_to_uri, self._codelist_entries)
+            if not concept_uri:
+                self.logger.warning(f"No URI found for class '{c}', skipping annotation.")
+                continue
+
             annotation = LinkingAnnotation(
                 self.task_uri,
                 self.source,
-                # TO DO: CHANGE TO ACTUAL URI
-                "http://example.org/" + c,
+                concept_uri,
                 AI_COMPONENTS["model_annotater"],
                 AGENT_TYPES["ai_component"]
             )
@@ -118,11 +109,14 @@ class ModelBatchAnnotatingTask(Task):
         super().__init__(task_uri)
 
     def process(self):
+        config = get_config()
+        codelist_entries = fetch_codelist(config.codelist.concept_scheme_uri)
+
         decision_uris = self.fetch_decisions_without_annotations()
         print(f"{len(decision_uris)} decisions to process.", flush=True)
 
         for i, decision_uri in enumerate(decision_uris):
-            ModelAnnotatingTask(self.task_uri, decision_uri).process()
+            ModelAnnotatingTask(self.task_uri, decision_uri, codelist_entries=codelist_entries).process()
             print(
                 f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
 
@@ -159,41 +153,25 @@ class ClassifierTrainingTask(Task):
         super().__init__(task_uri)
 
     def process(self):
+        config = get_config()
+        codelist_entries = fetch_codelist(config.codelist.concept_scheme_uri)
+        labels = [entry.label for entry in codelist_entries]
+        uri_to_label = {entry.uri: entry.label for entry in codelist_entries}
+
         decisions = self.fetch_decisions_with_classes()
-        decisions = self.convert_classes_to_original_names(decisions)
+        decisions = self.convert_classes_to_original_names(decisions, uri_to_label)
 
         decisions = [d for d in decisions if d.get("classes")]
         if not decisions:
             print("No labeled decisions found; skipping training.", flush=True)
             return
 
-        # TO DO: ADD FUNCTION TO RETRIEVE ACTUAL CODE LIST
-        sdgs = ["SDG-01 No Poverty",
-                "SDG-02 Zero Hunger",
-                "SDG-03 Good Health and Well-Being",
-                "SDG-04 Quality Education",
-                "SDG-05 Gender Equality",
-                "SDG-06 Clean Water and Sanitation",
-                "SDG-07 Affordable and Clean Energy",
-                "SDG-08 Decent Work and Economic Growth",
-                "SDG-09 Industry, Innovation and Infrastructure",
-                "SDG-10 Reduced Inequality",
-                "SDG-11 Sustainable Cities and Communities",
-                "SDG-12 Responsible Consumption and Production",
-                "SDG-13 Climate Action",
-                "SDG-14 Life Below Water",
-                "SDG-15 Life on Land",
-                "SDG-16 Peace, Justice and Strong Institutions",
-                "SDG-17 Partnerships for the Goals"
-                ]
-
-        config = get_config()
         ml_config = config.ml_training
 
         print("Started training...", flush=True)
         train(
             decisions[:10],
-            sdgs,
+            labels,
             ml_config.huggingface_output_model_id,
             transformer=ml_config.transformer,
             learning_rate=ml_config.learning_rate,
@@ -202,11 +180,11 @@ class ClassifierTrainingTask(Task):
         )
         print("Done training!", flush=True)
 
-    def convert_classes_to_original_names(self, decisions: list[dict[str, str | list[str]]]):
+    def convert_classes_to_original_names(self, decisions: list[dict[str, str | list[str]]], uri_to_label: dict[str, str]):
         for decision in decisions:
             decision["classes"] = [
-                c.split("/")[-1].replace("_", " ") for c in decision["classes"]]
-
+                uri_to_label.get(c, c) for c in decision["classes"]
+            ]
         return decisions
 
     def fetch_decisions_with_classes(self) -> list[dict[str, str | list[str]]]:

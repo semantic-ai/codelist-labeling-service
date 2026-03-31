@@ -1,0 +1,19 @@
+services:
+  codelist-labeling-service:
+    container_name: codelist-labeling-service
+    build:
+      context: .
+    ports:
+      - "8086:80"
+    networks:
+      - app-decide_default
+    environment:
+      MU_SPARQL_ENDPOINT: http://virtuoso:8890/sparql
+      ALLOW_MU_AUTH_SUDO: "true"
+    volumes:
+      - ./:/app
+      - ./config.json:/usr/src/app/config.json:ro
+
+networks:
+  app-decide_default:
+    external: true
