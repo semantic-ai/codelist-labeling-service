@@ -1,16 +1,15 @@
 import logging
-from dataclasses import dataclass
 
+from pydantic import BaseModel, Field
 from helpers import query
 from escape_helpers import sparql_escape_uri
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class CodelistEntry:
-    uri: str
-    label: str
+class CodelistEntry(BaseModel):
+    uri: str = Field(description="URI of the SKOS concept")
+    label: str = Field(description="Label of the concept")
 
 
 def fetch_codelist(concept_scheme_uri: str) -> list[CodelistEntry]:
