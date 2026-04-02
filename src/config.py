@@ -34,9 +34,9 @@ class CodelistConfig(BaseModel):
 class LlmConfig(BaseModel):
     """LLM (Large Language Model) configuration."""
 
-    provider: Literal["openai", "ollama", "random"] = Field(
+    provider: str = Field(
         default="ollama",
-        description="LLM provider to use: openai, ollama, or random (for testing)"
+        description="LLM provider (e.g. 'ollama', 'openai', 'anthropic') or 'random' for testing"
     )
     model_name: str = Field(
         default="mistral-nemo",
@@ -50,16 +50,16 @@ class LlmConfig(BaseModel):
     )
     api_key: SecretStr | None = Field(
         default=None,
-        description="API key (used by OpenAI)"
+        description="API key for the provider"
     )
-    base_url: str = Field(
+    base_url: str | None = Field(
         default="http://ollama:11434",
-        description="Base URL for the LLM server (used by Ollama)"
+        description="Base URL for the LLM server (for Ollama/compatible providers)"
     )
-    timeout: int = Field(
+    timeout: int | None = Field(
         default=120,
         ge=1,
-        description="Request timeout in seconds (used by Ollama)"
+        description="Request timeout in seconds"
     )
 
 

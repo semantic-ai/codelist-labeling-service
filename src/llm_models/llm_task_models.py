@@ -20,5 +20,7 @@ class LlmTaskInput(BaseModel):
 
 class EntityLinkingTaskOutput(BaseModel):
     designated_classes: list[str] = Field(
-        description="List of strings containing the name(s) of the class(es) that best designates the provided decision"
+        description="List of matching class labels copied exactly from the provided CODE LIST. "
+        "Each value must be the full label text as it appears in the list. "
+        "Return an empty list if none of the classes match."
     )
