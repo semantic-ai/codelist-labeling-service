@@ -13,6 +13,7 @@ class CodelistEntry(BaseModel):
 
 
 def fetch_codelist(concept_scheme_uri: str) -> list[CodelistEntry]:
+    # TODO: also fetch skos:definition to give the LLM more context for classification
     """Fetch all SKOS concepts from a concept scheme in the triplestore."""
     q = f"""
     PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
