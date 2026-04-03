@@ -1,66 +1,97 @@
-from abc import ABC, abstractmethod
-from openai import OpenAI
-from .llm_task_models import LlmTaskInput
+"""LLM client factory using LangChain's unified chat model interface."""
+
+import json
+import logging
+import re
+
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
+from .llm_task_models import LlmTaskInput
 
-class RemoteLlmModel(ABC):
-    def __init__(self, config: dict):
-        self.config = config
-
-    @abstractmethod
-    def __call__(self, input: LlmTaskInput) -> BaseModel:
-        pass
-
-    @abstractmethod
-    def _format_messages(self, input: LlmTaskInput) -> BaseModel:
-        """Function to format the LlmTaskInput to the specific LLM client input format"""
-        pass
+logger = logging.getLogger(__name__)
 
 
-class OpenAIModel(RemoteLlmModel):
-    """Class implementing the OpenAI LLM client"""
+class LangChainLlmClient:
+    """Callable wrapper around a LangChain chat model with manual JSON parsing."""
 
-    def __init__(self, config: dict):
-        super().__init__(
-            config
-        )
-
-        self._client = OpenAI()
+    def __init__(self, chat_model):
+        self._chat_model = chat_model
 
     def __call__(self, input: LlmTaskInput) -> BaseModel:
-        messages = self._format_messages(input)
+        schema_json = json.dumps(input.output_format.model_json_schema(), indent=2)
 
-        kwargs = {
-            "model": self.config["model_name"],
-            "input": messages,
-            "text_format": input.output_format,
-        }
-
-        for key, value in self.config.items():
-            if key != "model_name":
-                kwargs[key] = value
-
-        response = self._client.responses.parse(**kwargs)
-
-        return response.output_parsed
-
-    def _format_messages(self, input: LlmTaskInput):
         messages = [
-            {
-                "role": "system",
-                "content": input.system_message
-            },
-            {
-                "role": "user",
-                "content": input.user_message
-            }
+            SystemMessage(content=input.system_message),
+            HumanMessage(content=(
+                f"{input.user_message}\n\n"
+                f"IMPORTANT: You must respond ONLY with valid JSON matching this schema:\n"
+                f"{schema_json}\n"
+                f"Do not include any text before or after the JSON."
+            )),
         ]
 
-        if input.assistant_message:
-            messages.append({
-                "role": "assistant",
-                "content": input.assistant_message
-            })
+        response = self._chat_model.invoke(messages)
+        raw_text = response.content
+        return self._parse_response(raw_text, input.output_format)
 
-        return messages
+    @staticmethod
+    def _parse_response(raw_text: str, output_format: type[BaseModel]) -> BaseModel:
+        """Extract JSON from the LLM text response and parse into the Pydantic model."""
+        text = raw_text.strip()
+
+        # Try direct JSON parse
+        try:
+            return output_format.model_validate(json.loads(text))
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        # Try extracting from markdown code blocks
+        match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', text, re.DOTALL)
+        if match:
+            try:
+                return output_format.model_validate(json.loads(match.group(1).strip()))
+            except (json.JSONDecodeError, Exception):
+                pass
+
+        # Try finding a JSON object or array
+        match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
+        if match:
+            try:
+                return output_format.model_validate(json.loads(match.group(1)))
+            except (json.JSONDecodeError, Exception):
+                pass
+
+        raise ValueError(
+            f"Could not parse valid JSON from LLM response. Raw text: {text[:500]}"
+        )
+
+
+def create_llm_client(llm_config) -> LangChainLlmClient | None:
+    """Factory to create a LangChain-based LLM client from config.
+
+    Returns None for the 'random' provider (callers handle the random fallback).
+    """
+    if llm_config.provider == "random":
+        return None
+
+    model_id = f"{llm_config.provider}:{llm_config.model_name}"
+
+    kwargs: dict = {
+        "temperature": llm_config.temperature,
+    }
+
+    if llm_config.api_key:
+        kwargs["api_key"] = llm_config.api_key.get_secret_value()
+
+    if llm_config.base_url:
+        kwargs["base_url"] = llm_config.base_url
+
+    if llm_config.timeout:
+        kwargs["timeout"] = llm_config.timeout
+
+    logger.info("Initializing LLM: %s", model_id)
+    chat_model = init_chat_model(model_id, **kwargs)
+
+    return LangChainLlmClient(chat_model)
