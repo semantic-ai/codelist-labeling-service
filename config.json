@@ -1,7 +1,4 @@
 {
-  "codelist": {
-    "concept_scheme_uri": "http://data.lblod.gift/id/conceptscheme/sdg-simple"
-  },
   "llm": {
     "provider": "ollama",
     "model_name": "mistral-nemo",
