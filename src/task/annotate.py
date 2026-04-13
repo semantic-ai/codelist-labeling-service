@@ -114,9 +114,7 @@ class ModelBatchAnnotatingTask(Task):
         """
         res = query(q, sudo=True)
         bindings = res.get("results", {}).get("bindings", [])
-        if bindings:
-            return bindings[0]["graph"]["value"]
-        return None
+        return bindings[0]["graph"]["value"] if bindings else None
 
     def get_codelist(self) -> str | None:
         q = f"""
@@ -136,7 +134,6 @@ class ModelBatchAnnotatingTask(Task):
     def process(self):
         job_codelist = self.get_codelist()
         codelist_entries = Codelist.from_uri(job_codelist)
-
         target_graph = self.get_target_graph()
         decision_uris = self.fetch_decisions_without_annotations(target_graph)
         print(f"{len(decision_uris)} decisions to process.", flush=True)
@@ -147,29 +144,40 @@ class ModelBatchAnnotatingTask(Task):
                 f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
     
 
-    def fetch_decisions_without_annotations(self, target_graph: str) -> list[str]:
-        target_graph_pattern = f"GRAPH <{target_graph}>" if target_graph else "GRAPH ?dataGraph"
-
-        q = Template(
-            get_prefixes_for_query("rdf", "eli", "oa") + f"""
+    def fetch_decisions_without_annotations(self, target_graph: str | None = None) -> list[str]:
+        if target_graph:
+            q = Template(get_prefixes_for_query("rdf", "eli", "oa") + """
             SELECT DISTINCT ?s
-            WHERE {{
-                GRAPH <$graph> {{
+            WHERE {
+                GRAPH <$graph> {
                     ?s rdf:type eli:Expression .
-                }}
-                FILTER NOT EXISTS {{
-                    GRAPH <$graph> {{
+                }
+                FILTER NOT EXISTS {
+                    GRAPH <$graph> {
                     ?ann a oa:Annotation ;
                         oa:hasTarget ?s ;
                         oa:motivatedBy oa:classifying .
-                    }}
-                }}
-            }}
-            """
-        ).substitute(graph=target_graph)
+                    }
+                }
+            }
+            """).substitute(graph=target_graph)
+        else:
+            q = Template(get_prefixes_for_query("rdf", "eli", "oa") + """
+            SELECT DISTINCT ?s
+            WHERE {
+                GRAPH ?dataGraph {
+                    ?s rdf:type eli:Expression .
+                }
+                FILTER NOT EXISTS {
+                    GRAPH $graph {
+                    ?ann a oa:Annotation ;
+                        oa:hasTarget ?s ;
+                        oa:motivatedBy oa:classifying .
+                    }
+                }
+            }
+            """).substitute(graph=sparql_escape_uri(GRAPHS['ai']))
 
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
-        decision_uris = [b["s"]["value"] for b in bindings if "s" in b]
-
-        return decision_uris
+        return [b["s"]["value"] for b in bindings if "s" in b]
