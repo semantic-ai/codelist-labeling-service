@@ -42,6 +42,28 @@ def fetch_codelist(concept_scheme_uri: str) -> list[CodelistEntry]:
     return entries
 
 
+def fetch_codelist_uri_for_task(task_uri: str) -> str:
+    """Resolve the SKOS ConceptScheme URI from the Job linked to this task."""
+    q = f"""
+    PREFIX dct: <http://purl.org/dc/terms/>
+    PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+
+    SELECT ?codelist
+    WHERE {{
+        {sparql_escape_uri(task_uri)} dct:isPartOf ?job .
+        ?job ext:codelist ?codelist .
+    }}
+    """
+    response = query(q, sudo=True)
+    bindings = response.get("results", {}).get("bindings", [])
+    if not bindings:
+        raise ValueError(
+            f"No codelist URI found for task {task_uri}. "
+            f"Ensure the job has ext:codelist set."
+        )
+    return bindings[0]["codelist"]["value"]
+
+
 def build_label_to_uri_map(entries: list[CodelistEntry]) -> dict[str, str]:
     """Build a label -> URI mapping for reverse lookup after LLM response."""
     mapping = {}
