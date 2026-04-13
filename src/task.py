@@ -1,5 +1,6 @@
 import logging
 import random
+from string import Template
 from helpers import query, update
 
 from decide_ai_service_base.task import DecisionTask, Task
@@ -18,21 +19,13 @@ class ModelAnnotatingTask(DecisionTask):
 
     __task_type__ = TASK_OPERATIONS["model_annotation"]
 
-    def __init__(self, task_uri: str, source: str | None = None, codelist_entries: list[CodelistEntry] | None = None):
-        if source is None:
-            super().__init__(task_uri)
-        else:
-            self.task_uri = task_uri
-            self.logger = logging.getLogger(self.__class__.__name__)
-            self.source = source
+    def __init__(self, task_uri: str, source: str, codelist_entries: list[CodelistEntry]):
+        super().__init__(task_uri)
+        self.source = source
 
         config = get_config()
 
-        # Codelist: use provided entries or fetch from triplestore
-        if codelist_entries is not None:
-            self._codelist_entries = codelist_entries
-        else:
-            self._codelist_entries = fetch_codelist(config.codelist.concept_scheme_uri)
+        self._codelist_entries = codelist_entries
         self._label_to_uri = build_label_to_uri_map(self._codelist_entries)
 
         # LLM setup
@@ -103,16 +96,47 @@ class ModelAnnotatingTask(DecisionTask):
 class ModelBatchAnnotatingTask(Task):
     """Task that creates ModelAnnotatingTasks for all decisions that are not yet annotated."""
 
-    __task_type__ = TASK_OPERATIONS["model_batch_annotation"]
+    __task_type__ = "http://lblod.data.gift/id/jobs/concept/TaskOperation/codelist-matching/annotate"
 
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
 
-    def process(self):
-        config = get_config()
-        codelist_entries = fetch_codelist(config.codelist.concept_scheme_uri)
+    def get_target_graph(self) -> str | None:
+        q = f"""
+        PREFIX dct: <http://purl.org/dc/terms/>
+        PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+        SELECT ?graph WHERE {{
+            <{self.task_uri}> dct:isPartOf ?job .
+            ?job ext:graphForTargets ?graph .
+        }}
+        """
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+        if bindings:
+            return bindings[0]["graph"]["value"]
+        return None
 
-        decision_uris = self.fetch_decisions_without_annotations()
+    def get_codelist(self) -> str | None:
+        q = f"""
+        PREFIX dct: <http://purl.org/dc/terms/>
+        PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+        SELECT ?codelist WHERE {{
+            <{self.task_uri}> dct:isPartOf ?job .
+            ?job ext:codelist ?codelist .
+        }}
+        """
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+        if bindings:
+            return bindings[0]["codelist"]["value"]
+        return None
+
+    def process(self):
+        job_codelist = self.get_codelist()
+        codelist_entries = fetch_codelist(job_codelist)
+
+        target_graph = self.get_target_graph()
+        decision_uris = self.fetch_decisions_without_annotations(target_graph)
         print(f"{len(decision_uris)} decisions to process.", flush=True)
 
         for i, decision_uri in enumerate(decision_uris):
@@ -120,22 +144,26 @@ class ModelBatchAnnotatingTask(Task):
             print(
                 f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
 
-    def fetch_decisions_without_annotations(self) -> list[str]:
-        q = get_prefixes_for_query("rdf", "eli", "oa") + """
-        SELECT DISTINCT ?s
-        WHERE {
-            GRAPH ?dataGraph {
-                ?s rdf:type eli:Expression .
-            }
-            FILTER NOT EXISTS {
-                GRAPH <http://mu.semte.ch/graphs/ai> {
-                ?ann a oa:Annotation ;
-                    oa:hasTarget ?s ;
-                    oa:motivatedBy oa:classifying .
-                }
-            }
-        }
-        """
+    def fetch_decisions_without_annotations(self, target_graph: str) -> list[str]:
+        target_graph_pattern = f"GRAPH <{target_graph}>" if target_graph else "GRAPH ?dataGraph"
+
+        q = Template(
+            get_prefixes_for_query("rdf", "eli", "oa") + f"""
+            SELECT DISTINCT ?s
+            WHERE {{
+                GRAPH <$graph> {{
+                    ?s rdf:type eli:Expression .
+                }}
+                FILTER NOT EXISTS {{
+                    GRAPH <$graph> {{
+                    ?ann a oa:Annotation ;
+                        oa:hasTarget ?s ;
+                        oa:motivatedBy oa:classifying .
+                    }}
+                }}
+            }}
+            """
+        ).substitute(graph=target_graph)
 
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
