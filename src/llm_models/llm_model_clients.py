@@ -7,8 +7,10 @@ import re
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
+from typing import Any
 
 from .llm_task_models import LlmTaskInput
+from ..config import LlmConfig
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +70,7 @@ class LangChainLlmClient:
         )
 
 
-def create_llm_client(llm_config) -> LangChainLlmClient | None:
-    """Factory to create a LangChain-based LLM client from config.
-
-    Returns None for the 'random' provider (callers handle the random fallback).
-    """
+def create_llm_model(llm_config: LlmConfig) -> Any:
     if llm_config.provider == "random":
         return None
 
@@ -92,6 +90,12 @@ def create_llm_client(llm_config) -> LangChainLlmClient | None:
         kwargs["timeout"] = llm_config.timeout
 
     logger.info("Initializing LLM: %s", model_id)
-    chat_model = init_chat_model(model_id, **kwargs)
+    return init_chat_model(model_id, **kwargs)
 
-    return LangChainLlmClient(chat_model)
+
+def create_llm_client(llm_config) -> LangChainLlmClient | None:
+    """Factory to create a LangChain-based LLM client from config.
+
+    Returns None for the 'random' provider (callers handle the random fallback).
+    """
+    return LangChainLlmClient(create_llm_model(llm_config))
