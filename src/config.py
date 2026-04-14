@@ -22,15 +22,6 @@ class AppSettingsConfig(BaseModel):
         return v.strip().lower() if isinstance(v, str) else v
 
 
-class CodelistConfig(BaseModel):
-    """Configuration for the codelist (concept scheme) to label against."""
-
-    concept_scheme_uri: str = Field(
-        default="http://data.lblod.gift/id/conceptscheme/sdg-simple",
-        description="URI of the SKOS ConceptScheme to fetch concepts from"
-    )
-
-
 class LlmConfig(BaseModel):
     """LLM (Large Language Model) configuration."""
 
@@ -100,10 +91,6 @@ class AppConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # Reject extra fields not defined in the model
 
-    codelist: CodelistConfig = Field(
-        default_factory=CodelistConfig,
-        description="Codelist (concept scheme) configuration"
-    )
     llm: LlmConfig = Field(
         default_factory=LlmConfig,
         description="LLM configuration"

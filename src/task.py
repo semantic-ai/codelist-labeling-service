@@ -9,7 +9,7 @@ from decide_ai_service_base.annotation import LinkingAnnotation
 from .llm_models.llm_model_clients import create_llm_client
 from .llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
 from .classifier.train import train
-from .codelist import CodelistEntry, fetch_codelist, build_label_to_uri_map, resolve_label_to_uri
+from .codelist import CodelistEntry, fetch_codelist, fetch_codelist_uri_for_task, build_label_to_uri_map, resolve_label_to_uri
 from .config import get_config
 
 
@@ -28,11 +28,12 @@ class ModelAnnotatingTask(DecisionTask):
 
         config = get_config()
 
-        # Codelist: use provided entries or fetch from triplestore
+        # Codelist: use provided entries or resolve dynamically from the job
         if codelist_entries is not None:
             self._codelist_entries = codelist_entries
         else:
-            self._codelist_entries = fetch_codelist(config.codelist.concept_scheme_uri)
+            concept_scheme_uri = fetch_codelist_uri_for_task(self.task_uri)
+            self._codelist_entries = fetch_codelist(concept_scheme_uri)
         self._label_to_uri = build_label_to_uri_map(self._codelist_entries)
 
         # LLM setup
@@ -52,6 +53,7 @@ class ModelAnnotatingTask(DecisionTask):
             "Provide your answer as a list of strings representing the matching codes. Provide all matching codes (can be a single one), but only those that are truly matching and only from the given list! If none of the codes match, return an empty list."
 
     def process(self):
+        # TODO: read ext:propertyPathForText from the job and pass it to fetch_data() instead of hardcoding epvoc:expressionContent
         task_data = self.fetch_data()
         self.logger.info(task_data)
 
@@ -109,8 +111,8 @@ class ModelBatchAnnotatingTask(Task):
         super().__init__(task_uri)
 
     def process(self):
-        config = get_config()
-        codelist_entries = fetch_codelist(config.codelist.concept_scheme_uri)
+        concept_scheme_uri = fetch_codelist_uri_for_task(self.task_uri)
+        codelist_entries = fetch_codelist(concept_scheme_uri)
 
         decision_uris = self.fetch_decisions_without_annotations()
         print(f"{len(decision_uris)} decisions to process.", flush=True)
@@ -121,6 +123,7 @@ class ModelBatchAnnotatingTask(Task):
                 f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
 
     def fetch_decisions_without_annotations(self) -> list[str]:
+        # TODO: use ext:shapeForTargets (and optionally ext:graphForTargets) from the job to scope which decisions to fetch
         q = get_prefixes_for_query("rdf", "eli", "oa") + """
         SELECT DISTINCT ?s
         WHERE {
@@ -153,8 +156,8 @@ class ClassifierTrainingTask(Task):
         super().__init__(task_uri)
 
     def process(self):
-        config = get_config()
-        codelist_entries = fetch_codelist(config.codelist.concept_scheme_uri)
+        concept_scheme_uri = fetch_codelist_uri_for_task(self.task_uri)
+        codelist_entries = fetch_codelist(concept_scheme_uri)
         labels = [entry.label for entry in codelist_entries]
         uri_to_label = {entry.uri: entry.label for entry in codelist_entries}
 
@@ -166,7 +169,7 @@ class ClassifierTrainingTask(Task):
             print("No labeled decisions found; skipping training.", flush=True)
             return
 
-        ml_config = config.ml_training
+        ml_config = get_config().ml_training
 
         print("Started training...", flush=True)
         train(
