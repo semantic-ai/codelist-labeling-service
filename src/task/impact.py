@@ -1,13 +1,10 @@
-import logging
-import random
 from helpers import query, update
 from escape_helpers import sparql_escape_uri, sparql_escape_string
 from string import Template
 
-from decide_ai_service_base.task import DecisionTask, Task
-from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AI_COMPONENTS, AGENT_TYPES, GRAPHS, get_prefixes_for_query
-from decide_ai_service_base.annotation import LinkingAnnotation
-from pydantic import BaseModel
+from decide_ai_service_base.task import DecisionTask
+from decide_ai_service_base.sparql_config import TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
+from .codelist import CodeListTask
 from ..llm_models.llm_model_clients import create_llm_model
 from ..config import get_config
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -49,11 +46,12 @@ class ProcessItem(BaseModel):
 
 
 class PolicyLabel(BaseModel):
-    uri: str
-    policy_uri: str
+    annotation_uri: str
+    policy_concept_uri: str
+    policy_label: str
 
 
-class ImpactAssessment(DecisionTask):
+class ImpactAssessment(CodeListTask):
     """Task that links the correct code from a list to text."""
 
     __task_type__ = TASK_OPERATIONS["impact_accessment"]
@@ -124,10 +122,53 @@ class ImpactAssessment(DecisionTask):
             )
         ]
 
-    def fetch_policy_labels(self, expression_content) -> list[PolicyLabel]:
-        pass
+    def fetch_policy_labels(self, expression_uri: str) -> list[PolicyLabel]:
+        concept_scheme_uri = self.fetch_codelist_uri_for_task()
+        q = Template(
+            get_prefixes_for_query("oa", "skos") +
+            """
+            SELECT ?annotation ?concept ?label
+            WHERE {
+              GRAPH $annotation_graph {
+                ?annotation a oa:Annotation ;
+                            oa:motivatedBy oa:classifying ;
+                            oa:hasTarget $expression_uri ;
+                            oa:hasBody ?concept .
+              }
+              GRAPH $concept_graph {
+                ?concept a skos:Concept ;
+                         skos:inScheme $concept_scheme_uri ;
+                         skos:prefLabel ?label .
+              }
+            }
+            """
+        ).substitute(
+            annotation_graph=sparql_escape_uri(GRAPHS['ai']),
+            concept_graph=sparql_escape_uri("http://mu.semte.ch/graphs/public"),
+            expression_uri=sparql_escape_uri(expression_uri),
+            concept_scheme_uri=sparql_escape_uri(concept_scheme_uri)
+        )
+        bindings = query(q, sudo=True).get("results", {}).get("bindings", [])
+        if not bindings:
+            self.logger.warning(
+                f"No expressions found in input container for task {self.task_uri}")
+            return []
 
-    def _process_single(self, process_item: ProcessItem):
+        return [
+            PolicyLabel(
+                annotation_uri=t[0],
+                policy_concept_uri=t[1],
+                policy_label=t[2]
+            )
+            for t
+            in zip(
+                [b["annotation"]["value"] for b in bindings],
+                [b["concept"]["value"] for b in bindings],
+                [b["label"]["value"] for b in bindings]
+            )
+        ]
+
+    def _process_single(self, process_item: ProcessItem, policy_label: PolicyLabel) -> ImpactAssessment:
         SYSTEM_PROMPT = """
         You are a policy impact analyst specializing in sustainable development and governance.
 
@@ -150,7 +191,7 @@ class ImpactAssessment(DecisionTask):
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(
-                content=f"Policy text: {process_item.expression_content}\nLabel: {label}\n\nProvide a structured impact assessment."),
+                content=f"Policy text: {process_item.expression_content}\nLabel: {policy_label.policy_label}\n\nProvide a structured impact assessment."),
         ]
 
         return self.llm.invoke(messages)
@@ -160,18 +201,19 @@ class ImpactAssessment(DecisionTask):
         query_string = Template(get_prefixes_for_query("oa", "ext", "xsd") +
         """
         INSERT {
-            GRAPH ?graph {
+            GRAPH $graph {
                 $annotation_uri ext:has_impact $assessment .
             }
         }
         WHERE {
-            GRAPH ?graph {
+            GRAPH $graph {
                 $annotation_uri a oa:Annotation .
                 FILTER NOT EXISTS { $annotation_uri ext:has_impact ?anyImpact . }
             }
         }
         """
         ).substitute(
+            graph=sparql_escape_uri(GRAPHS['ai']),
             annotation_uri=sparql_escape_uri(annotation_uri),
             assessment=sparql_escape_string(assessment.impact_direction.value)
         )
@@ -185,6 +227,6 @@ class ImpactAssessment(DecisionTask):
 
     def process(self):
         for process_item in self.fetch_eli_expressions():
-            for policy_label in self.fetch_policy_labels(process_item.expression_content):
+            for policy_label in self.fetch_policy_labels(process_item.expression_uri):
                 assessment = self._process_single(process_item, policy_label)
                 self.store(policy_label.uri, assessment)

@@ -4,21 +4,17 @@ from decide_ai_service_base.task import Task
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, get_prefixes_for_query
 
 from ..classifier.train import train
-from ..codelist import fetch_codelist
 from ..config import get_config
+from .codelist import CodeListTask
 
 
-class ClassifierTrainingTask(Task):
+class ClassifierTrainingTask(CodeListTask):
     """Task that trains a classifier for the available annotations in the triple store."""
 
     __task_type__ = TASK_OPERATIONS["classifier_training"]
 
-    def __init__(self, task_uri: str):
-        super().__init__(task_uri)
-
     def process(self):
-        config = get_config()
-        codelist_entries = fetch_codelist(config.codelist.concept_scheme_uri)
+        codelist_entries = self.fetch_codelist()
         labels = [entry.label for entry in codelist_entries]
         uri_to_label = {entry.uri: entry.label for entry in codelist_entries}
 
@@ -30,7 +26,7 @@ class ClassifierTrainingTask(Task):
             print("No labeled decisions found; skipping training.", flush=True)
             return
 
-        ml_config = config.ml_training
+        ml_config = get_config().ml_training
 
         print("Started training...", flush=True)
         train(
