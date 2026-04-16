@@ -11,4 +11,4 @@ transformers
 datasets
 pydantic>=2.0.0
 fastapi
-https://github.com/semantic-ai/decide-ai-service-base/releases/download/0.1/decide_ai_service_base-0.1.0-py3-none-any.whl
+https://github.com/semantic-ai/decide-ai-service-base/releases/download/0.1.2/decide_ai_service_base-0.1.2-py3-none-any.whl
