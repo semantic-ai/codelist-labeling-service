@@ -1,3 +1,4 @@
+import dis
 from abc import ABC
 from decide_ai_service_base.task import DecisionTask
 import logging
@@ -55,6 +56,12 @@ class Codelist(list[CodelistEntry]):
             mapping[entry.label.replace(" ", "_")] = entry.uri
             mapping[entry.label.replace(" ", "_").lower()] = entry.uri
         return mapping
+
+    def build_uri_to_label_map(self) -> dict[str, str]:
+        return {entry.uri: entry.label for entry in self}
+
+    def get_labels(self) -> list[str]:
+        return [entry.label for entry in self]
 
     def resolve_label_to_uri(self, label: str, label_to_uri: dict[str, str]) -> str | None:
         """Resolve an LLM-returned label to a concept URI.

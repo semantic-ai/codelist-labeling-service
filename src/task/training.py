@@ -1,11 +1,13 @@
 from helpers import query, update
+from escape_helpers import sparql_escape_uri
 
-from decide_ai_service_base.task import Task
-from decide_ai_service_base.sparql_config import TASK_OPERATIONS, get_prefixes_for_query
+from string import Template
+
+from decide_ai_service_base.sparql_config import TASK_OPERATIONS, get_prefixes_for_query, GRAPHS
 
 from ..classifier.train import train
 from ..config import get_config
-from .codelist import CodeListTask
+from .codelist import CodeListTask, Codelist
 
 
 class ClassifierTrainingTask(CodeListTask):
@@ -15,11 +17,9 @@ class ClassifierTrainingTask(CodeListTask):
 
     def process(self):
         codelist_entries = self.fetch_codelist()
-        labels = [entry.label for entry in codelist_entries]
-        uri_to_label = {entry.uri: entry.label for entry in codelist_entries}
 
         decisions = self.fetch_decisions_with_classes()
-        decisions = self.convert_classes_to_original_names(decisions, uri_to_label)
+        decisions = self.convert_classes_to_original_names(decisions, codelist_entries)
 
         decisions = [d for d in decisions if d.get("classes")]
         if not decisions:
@@ -31,7 +31,7 @@ class ClassifierTrainingTask(CodeListTask):
         print("Started training...", flush=True)
         train(
             decisions[:10],
-            labels,
+            codelist_entries.get_labels(),
             ml_config.huggingface_output_model_id,
             transformer=ml_config.transformer,
             learning_rate=ml_config.learning_rate,
@@ -40,7 +40,9 @@ class ClassifierTrainingTask(CodeListTask):
         )
         print("Done training!", flush=True)
 
-    def convert_classes_to_original_names(self, decisions: list[dict[str, str | list[str]]], uri_to_label: dict[str, str]):
+    @staticmethod
+    def convert_classes_to_original_names(self, decisions: list[dict[str, str | list[str]]], codelist: Codelist):
+        uri_to_label = codelist.build_uri_to_label_map()
         for decision in decisions:
             decision["classes"] = [
                 uri_to_label.get(c, c) for c in decision["classes"]
@@ -48,18 +50,27 @@ class ClassifierTrainingTask(CodeListTask):
         return decisions
 
     def fetch_decisions_with_classes(self) -> list[dict[str, str | list[str]]]:
-        q = get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct") + """
+        q = Template(get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct", "skos") + """
         SELECT ?decision ?title ?description ?decision_basis ?content ?classes
         WHERE {
         {
             SELECT ?decision (GROUP_CONCAT(DISTINCT STR(?body); separator="|") AS ?classes)
             WHERE {
-                GRAPH <http://mu.semte.ch/graphs/ai> {
+                GRAPH $ai_graph {
                     ?ann a oa:Annotation ;
                         oa:hasTarget ?decision ;
                         oa:motivatedBy oa:classifying ;
                         oa:hasBody ?body .
                 }
+                
+                GRAPH $public_graph {
+                    ?body a skos:Concept ;
+                          skos:inScheme ?scheme .
+                  }
+            
+                  VALUES ?scheme {
+                    $concept_scheme_uri
+                  }
             }
             GROUP BY ?decision
         }
@@ -72,7 +83,11 @@ class ClassifierTrainingTask(CodeListTask):
                 OPTIONAL { ?decision dct:language ?lang }
             }
         }
-        """
+        """).substitute(
+            ai_graph=sparql_escape_uri(GRAPHS['ai']),
+            public_graph=sparql_escape_uri("http://mu.semte.ch/graphs/public"),
+            concept_scheme_uri=sparql_escape_uri(self.fetch_codelist_uri_for_task()),
+        )
 
         res = query(q, sudo=True)
         bindings = res.get("results", {}).get("bindings", [])

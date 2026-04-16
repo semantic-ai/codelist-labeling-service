@@ -2,7 +2,6 @@ from helpers import query, update
 from escape_helpers import sparql_escape_uri, sparql_escape_string
 from string import Template
 
-from decide_ai_service_base.task import DecisionTask
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
 from .codelist import CodeListTask
 from ..llm_models.llm_model_clients import create_llm_model
@@ -10,7 +9,6 @@ from ..config import get_config
 from langchain_core.messages import HumanMessage, SystemMessage
 
 
-import json
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -51,10 +49,10 @@ class PolicyLabel(BaseModel):
     policy_label: str
 
 
-class ImpactAssessment(CodeListTask):
+class ImpactAssessmentTask(CodeListTask):
     """Task that links the correct code from a list to text."""
 
-    __task_type__ = TASK_OPERATIONS["impact_accessment"]
+    __task_type__ = TASK_OPERATIONS["impact_assessment"]
 
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
@@ -176,14 +174,14 @@ class ImpactAssessment(CodeListTask):
         1. A **policy text** — a description of a decision, regulation, or initiative
         2. A **label** — a classification (e.g. an SDG goal, a thematic domain) that has already been assigned to this policy
 
-        Your task is to assess whether the impact of this policy on the given label's domain is **positive**, **negative**, **mixed**, or **uncertain**.
+        Your task is to assess whether the impact of this policy on the given label's domain is **positive**, **negative**, or **uncertain**.
 
         Follow this reasoning process:
         1. Identify the core intent and mechanisms of the policy
         2. Consider the specific scope and targets of the given label
         3. Assess direct effects first, then second-order effects
         4. Weigh both short-term and long-term consequences
-        5. Conclude with an overall impact direction and confidence level
+        5. Conclude with an overall impact direction and confidence level (**low**, **medium** or **high**)
 
         Be precise, grounded, and concise. Avoid generic praise or criticism.
         """
@@ -229,4 +227,4 @@ class ImpactAssessment(CodeListTask):
         for process_item in self.fetch_eli_expressions():
             for policy_label in self.fetch_policy_labels(process_item.expression_uri):
                 assessment = self._process_single(process_item, policy_label)
-                self.store(policy_label.uri, assessment)
+                self.store(policy_label.annotation_uri, assessment)

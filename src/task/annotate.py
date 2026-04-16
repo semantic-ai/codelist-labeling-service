@@ -21,11 +21,8 @@ class ModelAnnotatingTask(CodeListTask):
     __task_type__ = TASK_OPERATIONS["model_annotation"]
 
     def __init__(self, task_uri: str, source: str | None = None, codelist_entries: list[CodelistEntry] | None = None):
-        if source is None:
-            super().__init__(task_uri)
-        else:
-            self.task_uri = task_uri
-            self.logger = logging.getLogger(self.__class__.__name__)
+        super().__init__(task_uri)
+        if source is not None:
             self.source = source
 
         config = get_config()
