@@ -74,7 +74,7 @@ _TEST_GRAPHS = [
     GRAPHS["expressions"],
     GRAPHS["works"],
     GRAPHS["ai"],
-    "http://mu.semte.ch/graphs/public",
+    GRAPHS["public"],
 ]
 
 # ---------------------------------------------------------------------------
@@ -307,8 +307,8 @@ def annotation_triples():
     Inserts OA annotation + SKOS concept triples for fetch_policy_labels().
 
     Graphs written:
-        GRAPHS["ai"]                      oa:Annotation
-        http://mu.semte.ch/graphs/public  skos:Concept
+        GRAPHS["ai"]      oa:Annotation
+        GRAPHS["public"]  skos:Concept
     """
     sparql_update(f"""
         INSERT DATA {{
@@ -319,7 +319,7 @@ def annotation_triples():
                     {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(EXPRESSION_URI)} ;
                     {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI)} .
             }}
-            GRAPH <http://mu.semte.ch/graphs/public> {{
+            GRAPH {sparql_escape_uri(GRAPHS["public"])} {{
                 {sparql_escape_uri(CONCEPT_URI)}
                     a {sparql_escape_uri(NS["skos"] + "Concept")} ;
                     {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} ;

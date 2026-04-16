@@ -41,7 +41,7 @@ from tests.unit.conftest import (
 # the autouse wiper clears ALL data from all test graphs before each test)
 # ---------------------------------------------------------------------------
 
-_PUBLIC_GRAPH = "http://mu.semte.ch/graphs/public"
+_PUBLIC_GRAPH = GRAPHS["public"]
 _CONCEPT_URI_3 = "http://test.example.org/concepts/sdg-goal-3"
 _DCT_IS_PART_OF = "http://purl.org/dc/terms/isPartOf"
 _EXT_CODELIST = "http://mu.semte.ch/vocabularies/ext/codelist"

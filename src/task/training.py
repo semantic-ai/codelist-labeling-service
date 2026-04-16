@@ -85,7 +85,7 @@ class ClassifierTrainingTask(CodeListTask):
         }
         """).substitute(
             ai_graph=sparql_escape_uri(GRAPHS['ai']),
-            public_graph=sparql_escape_uri("http://mu.semte.ch/graphs/public"),
+            public_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
             concept_scheme_uri=sparql_escape_uri(self.fetch_codelist_uri_for_task()),
         )
 

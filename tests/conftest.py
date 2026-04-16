@@ -36,10 +36,35 @@ os.environ.setdefault("MODE", "test")
 #    • SPARQL_PREFIXES["ext"] – omitted from the shipped config; store() needs
 #      it to emit `PREFIX ext: <…>` via get_prefixes_for_query().
 # ---------------------------------------------------------------------------
-from decide_ai_service_base.sparql_config import TASK_OPERATIONS, SPARQL_PREFIXES  # noqa: E402
+from decide_ai_service_base.sparql_config import (  # noqa: E402
+    GRAPHS,
+    TASK_OPERATIONS,
+    SPARQL_PREFIXES,
+)
 
 TASK_OPERATIONS.setdefault(
     "impact_assessment",
     "http://lblod.data.gift/id/jobs/concept/TaskOperation/impact-assessing",
 )
 SPARQL_PREFIXES.setdefault("ext", "http://mu.semte.ch/vocabularies/ext/")
+
+# ---------------------------------------------------------------------------
+# 4. Redirect every named graph to a test-specific URI.
+#
+#    GRAPHS is mutated in-place so that every downstream reference – source
+#    code, fixtures, test assertions – automatically resolves to the safe
+#    test graph without any per-file patching.
+#
+#    This prevents an accidental run against a production Virtuoso instance
+#    from touching real data, because the test graphs (under /test/) will
+#    simply not exist there.
+# ---------------------------------------------------------------------------
+_TEST_GRAPH_BASE = "http://mu.semte.ch/graphs/test"
+
+for _key in list(GRAPHS):
+    GRAPHS[_key] = f"{_TEST_GRAPH_BASE}/{_key.replace('_', '-')}"
+
+# The public concept graph is not part of the shipped GRAPHS dict; add it
+# here so all test files can reference GRAPHS["public"] instead of a
+# hardcoded string.
+GRAPHS["public"] = f"{_TEST_GRAPH_BASE}/public"

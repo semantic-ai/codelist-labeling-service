@@ -56,7 +56,7 @@ OTHER_SCHEME_URI = "http://test.example.org/codelists/other-scheme"
 OTHER_CONCEPT_URI = "http://test.example.org/concepts/other-scheme-concept"
 OTHER_ANNOTATION_URI = "http://test.example.org/annotations/annotation-other"
 
-_PUBLIC_GRAPH = "http://mu.semte.ch/graphs/public"
+_PUBLIC_GRAPH = GRAPHS["public"]
 
 
 # ---------------------------------------------------------------------------

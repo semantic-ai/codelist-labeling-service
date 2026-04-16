@@ -142,7 +142,7 @@ class ImpactAssessmentTask(CodeListTask):
             """
         ).substitute(
             annotation_graph=sparql_escape_uri(GRAPHS['ai']),
-            concept_graph=sparql_escape_uri("http://mu.semte.ch/graphs/public"),
+            concept_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
             expression_uri=sparql_escape_uri(expression_uri),
             concept_scheme_uri=sparql_escape_uri(concept_scheme_uri)
         )
