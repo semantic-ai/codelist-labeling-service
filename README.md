@@ -31,3 +31,20 @@ By default, the service uses Ollama (local, no API key needed). To switch to an 
 The process is the same for any LangChain-supported provider (OpenAI, Anthropic, etc.) — just swap the package name (`langchain-openai`, `langchain-anthropic`, ...) and the `provider`/`model_name` values.
 
 Set `provider` to `"random"` to skip the LLM and assign random labels (useful for pipeline testing).
+
+## Running the tests
+
+1. Have a Virtuoso running on localhost. The easiest way to achieve this:
+```commandline
+docker run -eSPARQL_UPDATE='true' -p8890:8890 -v./tests/config/virtuoso.ini:/data/virtuoso.ini redpencil/virtuoso:1.4.0-rc.1
+```
+
+2. Install test dependencies
+```commandline
+pip install -r requirements-test.txt
+```
+
+3. Run pytest
+```commandline
+pytest -v tests/unit
+```
