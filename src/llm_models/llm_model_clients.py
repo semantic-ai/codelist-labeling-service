@@ -76,9 +76,8 @@ def create_llm_client(llm_config) -> LangChainLlmClient | None:
     if llm_config.provider == "random":
         return None
 
-    model_id = f"{llm_config.provider}:{llm_config.model_name}"
-
     kwargs: dict = {
+        "model_provider": llm_config.provider,
         "temperature": llm_config.temperature,
     }
 
@@ -91,7 +90,7 @@ def create_llm_client(llm_config) -> LangChainLlmClient | None:
     if llm_config.timeout:
         kwargs["timeout"] = llm_config.timeout
 
-    logger.info("Initializing LLM: %s", model_id)
-    chat_model = init_chat_model(model_id, **kwargs)
+    logger.info("Initializing LLM provider: %s, model: %s", llm_config.provider, llm_config.model_name)
+    chat_model = init_chat_model(llm_config.model_name, **kwargs)
 
     return LangChainLlmClient(chat_model)
