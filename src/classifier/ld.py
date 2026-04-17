@@ -3,7 +3,7 @@ import pytz
 from string import Template
 from datetime import datetime
 from escape_helpers import sparql_escape_uri, sparql_escape_string, sparql_escape_float, sparql_escape_datetime
-from decide_ai_service_base.sparql_config import get_prefixes_for_query, GRAPHS
+from decide_ai_service_base.sparql_config import get_prefixes_for_query, GRAPHS, SPARQL_PREFIXES
 
 
 def build_airo_model_insert_query(
@@ -13,9 +13,9 @@ def build_airo_model_insert_query(
     hf_repo_url: str,
     hf_tree_url: str,
     source_repo_url: str,
-    results: dict,
-    base: str = "http://example.com",
+    results: dict
 ) -> str:
+    base = SPARQL_PREFIXES["airo"]
     prefixes = get_prefixes_for_query(
         "dcterms", "ns1", "ns2", "ns3", "schema", "xsd", "rdf")
 
