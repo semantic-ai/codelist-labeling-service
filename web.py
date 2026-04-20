@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks
 from decide_ai_service_base.task import Task
 from decide_ai_service_base.util import wait_for_triplestore, process_open_tasks, fail_busy_and_scheduled_tasks
 from decide_ai_service_base.schema import NotificationResponse, TaskOperationsResponse
-from src.task import ModelAnnotatingTask, ModelBatchAnnotatingTask, ClassifierTrainingTask
+from src.task import ModelAnnotatingTask, ModelBatchAnnotatingTask, ClassifierTrainingTask, ImpactAssessmentTask
 
 @app.on_event("startup")
 async def startup_event():
