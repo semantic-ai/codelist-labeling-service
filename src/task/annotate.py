@@ -11,24 +11,22 @@ from decide_ai_service_base.annotation import LinkingAnnotation
 
 from ..llm_models.llm_model_clients import create_llm_client
 from ..llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
-from .codelist import CodelistEntry, CodeListTask
+from .codelist import Codelist, CodelistEntry, CodeListTask
 from ..config import get_config
 
 
-class ModelAnnotatingTask(CodeListTask):
+class ModelAnnotatingTask(DecisionTask):
     """Task that links the correct code from a list to text."""
 
     __task_type__ = TASK_OPERATIONS["model_annotation"]
 
-    def __init__(self, task_uri: str, source: str | None = None, codelist_entries: list[CodelistEntry] | None = None):
+    def __init__(self, task_uri: str, source: str, codelist_entries: Codelist):
         super().__init__(task_uri)
-        if source is not None:
-            self.source = source
+        self.source = source
 
         config = get_config()
 
-        # Codelist: use provided entries or resolve dynamically from the job
-        self._codelist_entries = codelist_entries if codelist_entries is not None else self.fetch_codelist()
+        self._codelist_entries = codelist_entries
         self._label_to_uri = self._codelist_entries.build_label_to_uri_map()
 
         # LLM setup
@@ -97,43 +95,78 @@ class ModelAnnotatingTask(CodeListTask):
             annotation.add_to_triplestore_if_not_exists()
 
 
-class ModelBatchAnnotatingTask(CodeListTask):
+class ModelBatchAnnotatingTask(Task):
     """Task that creates ModelAnnotatingTasks for all decisions that are not yet annotated."""
 
-    __task_type__ = TASK_OPERATIONS["model_batch_annotation"]
+    __task_type__ = "http://lblod.data.gift/id/jobs/concept/TaskOperation/codelist-matching/annotate"
 
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
 
+    def get_target_graph(self) -> str | None:
+        q = f"""
+        PREFIX dct: <http://purl.org/dc/terms/>
+        PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+        SELECT ?graph WHERE {{
+            <{self.task_uri}> dct:isPartOf ?job .
+            ?job ext:graphForTargets ?graph .
+        }}
+        """
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+        if bindings:
+            return bindings[0]["graph"]["value"]
+        return None
+
+    def get_codelist(self) -> str | None:
+        q = f"""
+        PREFIX dct: <http://purl.org/dc/terms/>
+        PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+        SELECT ?codelist WHERE {{
+            <{self.task_uri}> dct:isPartOf ?job .
+            ?job ext:codelist ?codelist .
+        }}
+        """
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+        if bindings:
+            return bindings[0]["codelist"]["value"]
+        return None
+
     def process(self):
-        codelist_entries = self.fetch_codelist()
-        decision_uris = self.fetch_decisions_without_annotations()
+        job_codelist = self.get_codelist()
+        codelist_entries = Codelist.from_uri(job_codelist)
+
+        target_graph = self.get_target_graph()
+        decision_uris = self.fetch_decisions_without_annotations(target_graph)
         print(f"{len(decision_uris)} decisions to process.", flush=True)
 
         for i, decision_uri in enumerate(decision_uris):
             ModelAnnotatingTask(self.task_uri, decision_uri, codelist_entries=codelist_entries).process()
-            print(f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
+            print(
+                f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
+    
 
-    @staticmethod
-    def fetch_decisions_without_annotations() -> list[str]:
-        # TODO: use ext:shapeForTargets (and optionally ext:graphForTargets) from the job to scope which decisions to fetch
-        q = Template(get_prefixes_for_query("rdf", "eli", "oa") + """
-        SELECT DISTINCT ?s
-        WHERE {
-            GRAPH ?dataGraph {
-                ?s rdf:type eli:Expression .
-            }
-            FILTER NOT EXISTS {
-                GRAPH $graph {
-                ?ann a oa:Annotation ;
-                    oa:hasTarget ?s ;
-                    oa:motivatedBy oa:classifying .
-                }
-            }
-        }
-        """).substitute(
-            graph=sparql_escape_uri(GRAPHS['ai'])
-        )
+    def fetch_decisions_without_annotations(self, target_graph: str) -> list[str]:
+        target_graph_pattern = f"GRAPH <{target_graph}>" if target_graph else "GRAPH ?dataGraph"
+
+        q = Template(
+            get_prefixes_for_query("rdf", "eli", "oa") + f"""
+            SELECT DISTINCT ?s
+            WHERE {{
+                GRAPH <$graph> {{
+                    ?s rdf:type eli:Expression .
+                }}
+                FILTER NOT EXISTS {{
+                    GRAPH <$graph> {{
+                    ?ann a oa:Annotation ;
+                        oa:hasTarget ?s ;
+                        oa:motivatedBy oa:classifying .
+                    }}
+                }}
+            }}
+            """
+        ).substitute(graph=target_graph)
 
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
