@@ -86,6 +86,25 @@ class MLTrainingConfig(BaseModel):
     )
 
 
+class MLInferenceConfig(BaseModel):
+    """Machine Learning inference configuration."""
+
+    huggingface_model_id: str | None = Field(
+        default=None,
+        description="HuggingFace model ID to load for inference"
+    )
+    huggingface_token: SecretStr | None = Field(
+        default=None,
+        description="HuggingFace API token for downloading private models"
+    )
+    confidence_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence to emit an annotation"
+    )
+
+
 class AppConfig(BaseModel):
     """Root application configuration model."""
 
@@ -98,6 +117,10 @@ class AppConfig(BaseModel):
     ml_training: MLTrainingConfig = Field(
         default_factory=MLTrainingConfig,
         description="Machine learning training configuration"
+    )
+    ml_inference: MLInferenceConfig = Field(
+        default_factory=MLInferenceConfig,
+        description="Machine learning inference configuration"
     )
 
 

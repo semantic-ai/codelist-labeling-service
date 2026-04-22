@@ -14,5 +14,10 @@
     "weight_decay": 0.01,
     "huggingface_token": null,
     "huggingface_output_model_id": null
+  },
+  "ml_inference": {
+    "huggingface_model_id": null,
+    "huggingface_token": null,
+    "confidence_threshold": 0.5
   }
 }

@@ -1,5 +1,6 @@
 import git
-from huggingface_hub import login
+from datetime import datetime
+from huggingface_hub import login, ModelCard
 from .data import get_dataset_cls
 from .metrics import get_metric_cls
 from .ld import build_airo_model_insert_query
@@ -7,6 +8,44 @@ from ..config import get_config
 
 from helpers import update
 from transformers import AutoTokenizer, DataCollatorWithPadding, AutoModelForSequenceClassification, TrainingArguments, Trainer
+
+
+def _build_model_card(
+    model_id: str,
+    transformer: str,
+    labels: list[str],
+    results: dict,
+    code_git_sha: str,
+) -> ModelCard:
+    label_list = ", ".join(f"`{l}`" for l in sorted(labels))
+    metrics_line = " | ".join(
+        f"{k.replace('eval_', '').capitalize()}: {v:.4f}"
+        for k, v in results.items()
+        if isinstance(v, float) and k.startswith("eval_")
+    )
+    content = f"""---
+tags:
+- text-classification
+- codelist-labeling
+base_model: {transformer}
+---
+
+# {model_id}
+
+Fine-tuned from `{transformer}` for codelist classification.
+
+## Labels ({len(labels)})
+{label_list}
+
+## Metrics
+{metrics_line}
+
+## Training info
+- Base model: `{transformer}`
+- Code commit: `{code_git_sha}`
+- Trained: {datetime.now().strftime("%Y-%m-%d")}
+"""
+    return ModelCard(content)
 
 
 def train(
@@ -108,3 +147,6 @@ def train(
         update(query_str, sudo=True)
 
         print(query_str, flush=True)
+
+        card = _build_model_card(model_id, transformer, labels, results, repo.head.object.hexsha)
+        card.push_to_hub(model_id)

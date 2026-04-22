@@ -135,7 +135,7 @@ class ModelBatchAnnotatingTask(Task):
         job_codelist = self.get_codelist()
         codelist_entries = Codelist.from_uri(job_codelist)
         target_graph = self.get_target_graph()
-        decision_uris = self.fetch_decisions_without_annotations(target_graph)
+        decision_uris = self.fetch_decisions_without_annotations(target_graph)[:10]
         print(f"{len(decision_uris)} decisions to process.", flush=True)
 
         for i, decision_uri in enumerate(decision_uris):
@@ -149,18 +149,26 @@ class ModelBatchAnnotatingTask(Task):
             q = Template(get_prefixes_for_query("rdf", "eli", "oa") + """
             SELECT DISTINCT ?s
             WHERE {
-                GRAPH <$graph> {
+                GRAPH <$target_graph> {
                     ?s rdf:type eli:Expression .
                 }
                 FILTER NOT EXISTS {
-                    GRAPH <$graph> {
-                    ?ann a oa:Annotation ;
-                        oa:hasTarget ?s ;
-                        oa:motivatedBy oa:classifying .
+                    {
+                        GRAPH <$target_graph> {
+                            ?ann a oa:Annotation ;
+                                oa:hasTarget ?s ;
+                                oa:motivatedBy oa:classifying .
+                        }
+                    } UNION {
+                        GRAPH $ai_graph {
+                            ?ann a oa:Annotation ;
+                                oa:hasTarget ?s ;
+                                oa:motivatedBy oa:classifying .
+                        }
                     }
                 }
             }
-            """).substitute(graph=target_graph)
+            """).substitute(target_graph=target_graph, ai_graph=sparql_escape_uri(GRAPHS['ai']))
         else:
             q = Template(get_prefixes_for_query("rdf", "eli", "oa") + """
             SELECT DISTINCT ?s

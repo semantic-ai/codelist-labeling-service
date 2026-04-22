@@ -4,7 +4,7 @@ from string import Template
 
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
 from .codelist import CodeListTask
-from ..llm_models.llm_model_clients import create_llm_model
+from ..llm_models.llm_model_clients import create_llm_client
 from ..config import get_config
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -50,14 +50,14 @@ class PolicyLabel(BaseModel):
 
 
 class ImpactAssessmentTask(CodeListTask):
-    """Task that links the correct code from a list to text."""
+    """Task that assesses the policy impact direction (positive/negative/uncertain) of existing codelist annotations using an LLM."""
 
-    __task_type__ = TASK_OPERATIONS["impact_assessment"]
+    __task_type__ = TASK_OPERATIONS["codelist_assess_impact"]
 
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
         config = get_config()
-        self.llm = create_llm_model(config.llm).with_structured_output(ImpactAssessment)
+        self.llm = create_llm_client(config.llm)._chat_model.with_structured_output(ImpactAssessment)
         self.provider = config.llm.provider
 
     def fetch_eli_expressions(self) -> list[ProcessItem]:
