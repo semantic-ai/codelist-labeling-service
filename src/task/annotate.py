@@ -98,7 +98,7 @@ class ModelAnnotatingTask(DecisionTask):
 class ModelBatchAnnotatingTask(Task):
     """Task that creates ModelAnnotatingTasks for all decisions that are not yet annotated."""
 
-    __task_type__ = "http://lblod.data.gift/id/jobs/concept/TaskOperation/codelist-matching/annotate"
+    __task_type__ = TASK_OPERATIONS["codelist_annotation"]
 
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
@@ -133,6 +133,8 @@ class ModelBatchAnnotatingTask(Task):
 
     def process(self):
         job_codelist = self.get_codelist()
+        if not job_codelist:
+            raise RuntimeError(f"No ext:codelist found for task {self.task_uri}")
         codelist_entries = Codelist.from_uri(job_codelist)
         target_graph = self.get_target_graph()
         decision_uris = self.fetch_decisions_without_annotations(target_graph)[:10]
