@@ -1,5 +1,6 @@
 import logging
 import random
+import time
 from string import Template
 from helpers import query, update
 from escape_helpers import sparql_escape_uri
@@ -61,38 +62,60 @@ class ModelAnnotatingTask(DecisionTask):
             return
 
         classes: list[str] = []
-        if self._provider == "random" or self._llm is None:
+        if self._provider == "random":
             self.logger.warning("Using random label (provider=random).")
             classes = [random.choice(labels)]
+        elif self._llm is None:
+            self.logger.error("No LLM client available; skipping model annotation.")
+            return
         else:
-            try:
-                llm_input = LlmTaskInput(system_message=self._llm_system_message,
-                                         user_message=self._llm_user_message.format(
-                                             code_list=labels, decision_text=task_data),
-                                         assistant_message=None,
-                                         output_format=EntityLinkingTaskOutput)
+            max_retries = 3
+            llm_input = LlmTaskInput(system_message=self._llm_system_message,
+                                     user_message=self._llm_user_message.format(
+                                         code_list=labels, decision_text=task_data),
+                                     assistant_message=None,
+                                     output_format=EntityLinkingTaskOutput)
 
-                response = self._llm(llm_input)
-                classes = response.designated_classes
-            except Exception as exc:
-                self.logger.warning(
-                    f"LLM call failed ({exc}); using random label as fallback.")
-                classes = [random.choice(labels)]
+            for attempt in range(1, max_retries + 1):
+                try:
+                    response = self._llm(llm_input)
+                    classes = response.designated_classes
+                    break
+                except Exception as exc:
+                    if attempt == max_retries:
+                        self.logger.warning(
+                            f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
+                    else:
+                        self.logger.warning(
+                            f"LLM call attempt {attempt}/{max_retries} failed ({exc}); retrying.")
+                        time.sleep(attempt)
 
-        for c in classes:
-            concept_uri = self._codelist_entries.resolve_label_to_uri(c, self._label_to_uri)
-            if not concept_uri:
-                self.logger.warning(f"No URI found for class '{c}', skipping annotation.")
-                continue
-
+        if not classes:
+            # Temporarily link to a "no match found" concept to avoid re-processing the same decision.
             annotation = LinkingAnnotation(
                 self.task_uri,
                 self.source,
-                concept_uri,
+                "http://data.lblod.gift/id/concept/no-match-found",
                 AI_COMPONENTS["model_annotater"],
                 AGENT_TYPES["ai_component"]
             )
             annotation.add_to_triplestore_if_not_exists()
+
+        else:
+            for c in classes:
+                concept_uri = self._codelist_entries.resolve_label_to_uri(c, self._label_to_uri)
+                if not concept_uri:
+                    self.logger.warning(f"No URI found for class '{c}', skipping annotation.")
+                    continue
+
+                annotation = LinkingAnnotation(
+                    self.task_uri,
+                    self.source,
+                    concept_uri,
+                    AI_COMPONENTS["model_annotater"],
+                    AGENT_TYPES["ai_component"]
+                )
+                annotation.add_to_triplestore_if_not_exists()
 
 
 class ModelBatchAnnotatingTask(Task):
