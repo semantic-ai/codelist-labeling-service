@@ -13,7 +13,7 @@ from .codelist import CodeListTask, Codelist
 class ClassifierTrainingTask(CodeListTask):
     """Task that trains a classifier for the available annotations in the triple store."""
 
-    __task_type__ = TASK_OPERATIONS["classifier_training"]
+    __task_type__ = TASK_OPERATIONS["codelist_training"]
 
     def process(self):
         codelist_entries = self.fetch_codelist()
@@ -41,7 +41,7 @@ class ClassifierTrainingTask(CodeListTask):
         print("Done training!", flush=True)
 
     @staticmethod
-    def convert_classes_to_original_names(self, decisions: list[dict[str, str | list[str]]], codelist: Codelist):
+    def convert_classes_to_original_names(decisions: list[dict[str, str | list[str]]], codelist: Codelist):
         uri_to_label = codelist.build_uri_to_label_map()
         for decision in decisions:
             decision["classes"] = [
