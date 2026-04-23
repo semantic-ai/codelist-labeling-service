@@ -103,7 +103,7 @@ class ModelBatchAnnotatingTask(Task):
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
 
-    def get_target_graph(self) -> str | None:
+    def get_target_graph(self) -> str:
         q = f"""
         PREFIX dct: <http://purl.org/dc/terms/>
         PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
@@ -114,7 +114,9 @@ class ModelBatchAnnotatingTask(Task):
         """
         res = query(q, sudo=True)
         bindings = res.get("results", {}).get("bindings", [])
-        return bindings[0]["graph"]["value"] if bindings else None
+        if not bindings:
+            raise RuntimeError(f"No ext:graphForTargets found for task {self.task_uri}")
+        return bindings[0]["graph"]["value"]
 
     def get_codelist(self) -> str | None:
         q = f"""
@@ -146,47 +148,30 @@ class ModelBatchAnnotatingTask(Task):
                 f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
     
 
-    def fetch_decisions_without_annotations(self, target_graph: str | None = None) -> list[str]:
-        if target_graph:
-            q = Template(get_prefixes_for_query("rdf", "eli", "oa") + """
-            SELECT DISTINCT ?s
-            WHERE {
-                GRAPH <$target_graph> {
-                    ?s rdf:type eli:Expression .
-                }
-                FILTER NOT EXISTS {
-                    {
-                        GRAPH <$target_graph> {
-                            ?ann a oa:Annotation ;
-                                oa:hasTarget ?s ;
-                                oa:motivatedBy oa:classifying .
-                        }
-                    } UNION {
-                        GRAPH $ai_graph {
-                            ?ann a oa:Annotation ;
-                                oa:hasTarget ?s ;
-                                oa:motivatedBy oa:classifying .
-                        }
+    def fetch_decisions_without_annotations(self, target_graph: str) -> list[str]:
+        q = Template(get_prefixes_for_query("rdf", "eli", "oa") + """
+        SELECT DISTINCT ?s
+        WHERE {
+            GRAPH <$target_graph> {
+                ?s rdf:type eli:Expression .
+            }
+            FILTER NOT EXISTS {
+                {
+                    GRAPH <$target_graph> {
+                        ?ann a oa:Annotation ;
+                            oa:hasTarget ?s ;
+                            oa:motivatedBy oa:classifying .
+                    }
+                } UNION {
+                    GRAPH $ai_graph {
+                        ?ann a oa:Annotation ;
+                            oa:hasTarget ?s ;
+                            oa:motivatedBy oa:classifying .
                     }
                 }
             }
-            """).substitute(target_graph=target_graph, ai_graph=sparql_escape_uri(GRAPHS['ai']))
-        else:
-            q = Template(get_prefixes_for_query("rdf", "eli", "oa") + """
-            SELECT DISTINCT ?s
-            WHERE {
-                GRAPH ?dataGraph {
-                    ?s rdf:type eli:Expression .
-                }
-                FILTER NOT EXISTS {
-                    GRAPH $graph {
-                    ?ann a oa:Annotation ;
-                        oa:hasTarget ?s ;
-                        oa:motivatedBy oa:classifying .
-                    }
-                }
-            }
-            """).substitute(graph=sparql_escape_uri(GRAPHS['ai']))
+        }
+        """).substitute(target_graph=target_graph, ai_graph=sparql_escape_uri(GRAPHS['ai']))
 
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
