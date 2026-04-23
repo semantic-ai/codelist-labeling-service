@@ -369,8 +369,8 @@ class TestStore:
             ASK {{
                 GRAPH {sparql_escape_uri(GRAPHS["ai"])} {{
                     {sparql_escape_uri(ANNOTATION_URI)}
-                        {sparql_escape_uri(NS["ext"] + "has_impact")}
-                        "{sample_assessment.impact_direction.value}" .
+                        {sparql_escape_uri(NS["oa"] + "hasBody")}
+                        {sparql_escape_uri("http://mu.semte.ch/vocabularies/ext/impact/positive")} .
                 }}
             }}
         """)
@@ -384,7 +384,7 @@ class TestStore:
         assert sparql_ask(f"""
             ASK {{
                 GRAPH {sparql_escape_uri(GRAPHS["ai"])} {{
-                    {sparql_escape_uri(ANNOTATION_URI)} {sparql_escape_uri(NS["ext"] + "has_impact")} "positive" .
+                    {sparql_escape_uri(ANNOTATION_URI)} {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri("http://mu.semte.ch/vocabularies/ext/impact/positive")}  .
                 }}
             }}
         """)
@@ -396,7 +396,7 @@ class TestStore:
         impact_task.store(ANNOTATION_URI, sample_assessment)
         impact_task.store(ANNOTATION_URI, sample_assessment)
 
-        count = sparql_count(GRAPHS["ai"], ANNOTATION_URI, f"{NS['ext']}has_impact")
+        count = sparql_count(GRAPHS["ai"], ANNOTATION_URI, f"{NS['oa']}hasBody")
         assert count == 1
 
     def test_raises_runtime_error_when_update_fails(
