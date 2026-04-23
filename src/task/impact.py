@@ -205,7 +205,7 @@ class ImpactAssessmentTask(CodeListTask):
             ImpactDirection.UNCERTAIN: 'http://mu.semte.ch/vocabularies/ext/impact/unknown'
         }
 
-        query_string = Template(get_prefixes_for_query("oa", "ext", "xsd") +
+        query_string = Template(get_prefixes_for_query("oa", "ext", "xsd", "skos") +
         """
         INSERT {
             GRAPH $graph {
@@ -215,14 +215,18 @@ class ImpactAssessmentTask(CodeListTask):
         WHERE {
             GRAPH $graph {
                 $annotation_uri a oa:Annotation .
-                FILTER NOT EXISTS { $annotation_uri oa:hasBody ?anyImpact . }
+                FILTER NOT EXISTS { 
+                    $annotation_uri oa:hasBody ?anyImpact .
+                    ?anyImpact skos:inScheme $impact_scheme . 
+                }
             }
         }
         """
         ).substitute(
             graph=sparql_escape_uri(GRAPHS['ai']),
             annotation_uri=sparql_escape_uri(annotation_uri),
-            assessment=sparql_escape_uri(mapping[assessment.impact_direction])
+            assessment=sparql_escape_uri(mapping[assessment.impact_direction]),
+            impact_scheme=sparql_escape_uri("http://mu.semte.ch/vocabularies/ext/impact")
         )
 
 
