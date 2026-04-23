@@ -137,7 +137,7 @@ class ModelBatchAnnotatingTask(Task):
             raise RuntimeError(f"No ext:codelist found for task {self.task_uri}")
         codelist_entries = Codelist.from_uri(job_codelist)
         target_graph = self.get_target_graph()
-        decision_uris = self.fetch_decisions_without_annotations(target_graph)[:10]
+        decision_uris = self.fetch_decisions_without_annotations(target_graph)
         print(f"{len(decision_uris)} decisions to process.", flush=True)
 
         for i, decision_uri in enumerate(decision_uris):
