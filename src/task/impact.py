@@ -16,6 +16,7 @@ from enum import Enum
 class ImpactDirection(str, Enum):
     POSITIVE = "positive"
     NEGATIVE = "negative"
+    NEUTRAL = "neutral"
     UNCERTAIN = "uncertain"
 
 
@@ -174,7 +175,7 @@ class ImpactAssessmentTask(CodeListTask):
         1. A **policy text** — a description of a decision, regulation, or initiative
         2. A **label** — a classification (e.g. an SDG goal, a thematic domain) that has already been assigned to this policy
 
-        Your task is to assess whether the impact of this policy on the given label's domain is **positive**, **negative**, or **uncertain**.
+        Your task is to assess whether the impact of this policy on the given label's domain is **positive**, **negative**, **neutral** or **uncertain**.
 
         Follow this reasoning process:
         1. Identify the core intent and mechanisms of the policy
@@ -196,25 +197,39 @@ class ImpactAssessmentTask(CodeListTask):
 
 
     def store(self, annotation_uri: str, assessment: ImpactAssessment):
-        query_string = Template(get_prefixes_for_query("oa", "ext", "xsd") +
+
+        mapping = {
+            ImpactDirection.POSITIVE: 'http://mu.semte.ch/vocabularies/ext/impact/positive',
+            ImpactDirection.NEGATIVE: 'http://mu.semte.ch/vocabularies/ext/impact/negative',
+            ImpactDirection.NEUTRAL: 'http://mu.semte.ch/vocabularies/ext/impact/neutral',
+            ImpactDirection.UNCERTAIN: 'http://mu.semte.ch/vocabularies/ext/impact/unknown'
+        }
+
+        query_string = Template(get_prefixes_for_query("oa", "ext", "xsd", "skos") +
         """
         INSERT {
             GRAPH $graph {
-                $annotation_uri ext:has_impact $assessment .
+                $annotation_uri oa:hasBody $assessment .
             }
         }
         WHERE {
             GRAPH $graph {
                 $annotation_uri a oa:Annotation .
-                FILTER NOT EXISTS { $annotation_uri ext:has_impact ?anyImpact . }
+                FILTER NOT EXISTS { 
+                    $annotation_uri oa:hasBody ?anyImpact .
+                    ?anyImpact skos:inScheme $impact_scheme . 
+                }
             }
         }
         """
         ).substitute(
             graph=sparql_escape_uri(GRAPHS['ai']),
             annotation_uri=sparql_escape_uri(annotation_uri),
-            assessment=sparql_escape_string(assessment.impact_direction.value)
+            assessment=sparql_escape_uri(mapping[assessment.impact_direction]),
+            impact_scheme=sparql_escape_uri("http://mu.semte.ch/vocabularies/ext/impact")
         )
+
+
         try:
             update(query_string, sudo=True)
         except Exception as e:
