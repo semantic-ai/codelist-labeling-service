@@ -15,6 +15,10 @@ class CodelistEntry(BaseModel):
 
 
 class Codelist(list[CodelistEntry]):
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.concept_scheme_uri = None
 
     @classmethod
     def from_uri(cls, concept_scheme_uri: str) -> 'Codelist':
@@ -44,7 +48,9 @@ class Codelist(list[CodelistEntry]):
         ]
 
         logger.info("Fetched %d concepts from scheme %s", len(entries), concept_scheme_uri)
-        return cls(entries)
+        instance = cls(entries)
+        instance.concept_scheme_uri = concept_scheme_uri
+        return instance
 
     def build_label_to_uri_map(self) -> dict[str, str]:
         """Build a label -> URI mapping for reverse lookup after LLM response."""

@@ -3,7 +3,8 @@ import random
 import time
 from string import Template
 from helpers import query, update
-from escape_helpers import sparql_escape_uri
+from escape_helpers import sparql_escape_uri, sparql_escape_string
+import uuid 
 
 from decide_ai_service_base.task import DecisionTask, Task
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AI_COMPONENTS, AGENT_TYPES, get_prefixes_for_query, \
@@ -100,6 +101,43 @@ class ModelAnnotatingTask(DecisionTask):
                 AGENT_TYPES["ai_component"]
             )
             annotation.add_to_triplestore_if_not_exists()
+    
+    def store_no_match(self):
+        id = uuid.uuid4()
+        uri = f"http://mu.semte.ch/vocabularies/ext/no-match-found/id/{id}"
+        query_string = Template(get_prefixes_for_query("ext", "mu") +
+        
+        """
+        INSERT DATA {
+            GRAPH $graph {
+                $uri a ext:NoMatchFound ;
+                     mu:uuid $id ;
+                     ext:forConceptScheme $concept_scheme .
+            }
+        }
+        """
+        ).substitute(
+            graph=sparql_escape_uri(GRAPHS['ai']),
+            uri=sparql_escape_uri(uri),
+            id=sparql_escape_string(id),
+            concept_scheme=sparql_escape_uri(self._codelist_entries.concept_scheme_uri)
+        )
+
+        try:
+            update(query_string, sudo=True)
+
+            annotation = LinkingAnnotation(
+                self.task_uri,
+                self.source,
+                uri,
+                AI_COMPONENTS["model_annotater"],
+                AGENT_TYPES["ai_component"]
+            )
+            annotation.add_to_triplestore_if_not_exists()
+        except Exception as e:
+            error_msg = f"Failed to insert no-match-found: {e}"
+            self.logger.error(error_msg, exc_info=True)
+            raise RuntimeError(error_msg) from e
 
         else:
             for c in classes:
@@ -171,7 +209,10 @@ class ModelBatchAnnotatingTask(Task):
                 f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
     
 
+    @staticmethod
     def fetch_decisions_without_annotations(self, target_graph: str) -> list[str]:
+        # TODO this one should accept a codelist and filter on annotations to concepts of that codelist (or no match founds for that codelist, else you can only annotate with one codelist)
+        # TODO: use ext:shapeForTargets (and optionally ext:graphForTargets) from the job to scope which decisions to fetch
         q = Template(get_prefixes_for_query("rdf", "eli", "oa") + """
         SELECT DISTINCT ?s
         WHERE {
