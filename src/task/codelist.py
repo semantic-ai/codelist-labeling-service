@@ -118,3 +118,18 @@ class CodeListTask(DecisionTask, ABC):
     def fetch_codelist(self) -> Codelist:
         codelist_uri = self.fetch_codelist_uri_for_task()
         return Codelist.from_uri(codelist_uri)
+    
+    def get_target_graph(self) -> str:
+        q = f"""
+        PREFIX dct: <http://purl.org/dc/terms/>
+        PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+        SELECT ?graph WHERE {{
+            <{self.task_uri}> dct:isPartOf ?job .
+            ?job ext:graphForTargets ?graph .
+        }}
+        """
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+        if not bindings:
+            raise RuntimeError(f"No ext:graphForTargets found for task {self.task_uri}")
+        return bindings[0]["graph"]["value"]
