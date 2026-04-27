@@ -1,6 +1,6 @@
 from string import Template
 from helpers import query
-from decide_ai_service_base.sparql_config import AGENT_TYPES, get_prefixes_for_query
+from decide_ai_service_base.sparql_config import AGENT_TYPES, TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
 from decide_ai_service_base.annotation import LinkingAnnotation
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from escape_helpers import sparql_escape_uri
@@ -13,7 +13,7 @@ from ..config import get_config
 class ClassifierAnnotatingTask(CodeListTask):
     """Runs a trained HuggingFace classifier on unlabeled decisions to produce codelist annotations at scale."""
 
-    __task_type__ = "http://lblod.data.gift/id/jobs/concept/TaskOperation/codelist-matching/classifier-annotate"
+    __task_type__ = TASK_OPERATIONS["codelist_classifier_annotation"]
 
     # AI_COMPONENTS in decide-ai-service-base has no classifier entry yet;
     # hardcoded so classifier annotations are distinguishable from LLM annotations in provenance queries.
@@ -57,11 +57,12 @@ class ClassifierAnnotatingTask(CodeListTask):
         return None
 
     def fetch_decisions_without_annotations_with_text(self, target_graph: str) -> list[dict]:
+        concept_scheme_uri = self.fetch_codelist_uri_for_task()
         q = Template(
-            get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct") + """
+            get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct", "skos") + """
             SELECT DISTINCT ?s ?title ?description ?decision_basis ?content
             WHERE {
-                GRAPH $graph {
+                GRAPH $target_graph {
                     ?s rdf:type eli:Expression .
                     OPTIONAL { ?s eli:title ?title }
                     OPTIONAL { ?s eli:description ?description }
@@ -69,15 +70,33 @@ class ClassifierAnnotatingTask(CodeListTask):
                     OPTIONAL { ?s epvoc:expressionContent ?content }
                 }
                 FILTER NOT EXISTS {
-                    GRAPH $graph {
-                        ?ann a oa:Annotation ;
-                             oa:hasTarget ?s ;
-                             oa:motivatedBy oa:classifying .
+                    {
+                        GRAPH $target_graph {
+                            ?ann a oa:Annotation ;
+                                oa:hasTarget ?s ;
+                                oa:motivatedBy oa:classifying ;
+                                oa:hasBody ?annotatedConcept .
+                        }
+                    } UNION {
+                        GRAPH $ai_graph {
+                            ?ann a oa:Annotation ;
+                                oa:hasTarget ?s ;
+                                oa:motivatedBy oa:classifying ;
+                                oa:hasBody ?annotatedConcept .
+                        }
+                    }
+                    GRAPH $public_graph {
+                        ?annotatedConcept skos:inScheme $concept_scheme_uri .
                     }
                 }
             }
             """
-        ).substitute(graph=sparql_escape_uri(target_graph))
+        ).substitute(
+            target_graph=sparql_escape_uri(target_graph),
+            ai_graph=sparql_escape_uri(GRAPHS["ai"]),
+            public_graph=sparql_escape_uri(GRAPHS["public"]),
+            concept_scheme_uri=sparql_escape_uri(concept_scheme_uri),
+        )
 
         response = query(q, sudo=True)
         results = []
