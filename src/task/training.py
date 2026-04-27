@@ -30,7 +30,7 @@ class ClassifierTrainingTask(CodeListTask):
 
         print("Started training...", flush=True)
         train(
-            decisions[:10],
+            decisions,
             codelist_entries.get_labels(),
             ml_config.huggingface_output_model_id,
             transformer=ml_config.transformer,
