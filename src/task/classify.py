@@ -3,6 +3,7 @@ from helpers import query
 from decide_ai_service_base.sparql_config import AGENT_TYPES, get_prefixes_for_query
 from decide_ai_service_base.annotation import LinkingAnnotation
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from escape_helpers import sparql_escape_uri
 
 from .codelist import CodeListTask
 from ..classifier.predict import predict as classifier_predict
@@ -19,27 +20,33 @@ class ClassifierAnnotatingTask(CodeListTask):
     _CLASSIFIER_AGENT_URI = "http://data.lblod.info/id/ai-components/classifier-annotation"
 
     def get_target_graph(self) -> str | None:
-        q = f"""
-        PREFIX dct: <http://purl.org/dc/terms/>
-        PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
-        SELECT ?graph WHERE {{
-            <{self.task_uri}> dct:isPartOf ?job .
-            ?job ext:graphForTargets ?graph .
-        }}
-        """
+        q = Template(
+            """
+            PREFIX dct: <http://purl.org/dc/terms/>
+            PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+            SELECT ?graph WHERE {
+                $task dct:isPartOf ?job .
+                ?job ext:graphForTargets ?graph .
+            }
+            """
+        ).substitute(task=sparql_escape_uri(self.task_uri))
+
         res = query(q, sudo=True)
         bindings = res.get("results", {}).get("bindings", [])
         return bindings[0]["graph"]["value"] if bindings else None
 
     def get_job_confidence_threshold(self) -> float | None:
-        q = f"""
-        PREFIX dct: <http://purl.org/dc/terms/>
-        PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
-        SELECT ?threshold WHERE {{
-            <{self.task_uri}> dct:isPartOf ?job .
-            ?job ext:confidenceThreshold ?threshold .
-        }}
-        """
+        q = Template(
+            """
+            PREFIX dct: <http://purl.org/dc/terms/>
+            PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+            SELECT ?threshold WHERE {
+                $task dct:isPartOf ?job .
+                ?job ext:confidenceThreshold ?threshold .
+            }
+            """
+        ).substitute(task=sparql_escape_uri(self.task_uri))
+
         res = query(q, sudo=True)
         bindings = res.get("results", {}).get("bindings", [])
         if bindings:
@@ -54,7 +61,7 @@ class ClassifierAnnotatingTask(CodeListTask):
             get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct") + """
             SELECT DISTINCT ?s ?title ?description ?decision_basis ?content
             WHERE {
-                GRAPH <$graph> {
+                GRAPH $graph {
                     ?s rdf:type eli:Expression .
                     OPTIONAL { ?s eli:title ?title }
                     OPTIONAL { ?s eli:description ?description }
@@ -62,7 +69,7 @@ class ClassifierAnnotatingTask(CodeListTask):
                     OPTIONAL { ?s epvoc:expressionContent ?content }
                 }
                 FILTER NOT EXISTS {
-                    GRAPH <$graph> {
+                    GRAPH $graph {
                         ?ann a oa:Annotation ;
                              oa:hasTarget ?s ;
                              oa:motivatedBy oa:classifying .
@@ -70,7 +77,7 @@ class ClassifierAnnotatingTask(CodeListTask):
                 }
             }
             """
-        ).substitute(graph=target_graph)
+        ).substitute(graph=sparql_escape_uri(target_graph))
 
         response = query(q, sudo=True)
         results = []

@@ -1,4 +1,5 @@
 from abc import ABC
+from string import Template
 from decide_ai_service_base.task import DecisionTask
 import logging
 from pydantic import BaseModel, Field
@@ -96,16 +97,18 @@ class Codelist(list[CodelistEntry]):
 class CodeListTask(DecisionTask, ABC):
     def fetch_codelist_uri_for_task(self) -> str:
         """Resolve the SKOS ConceptScheme URI from the Job linked to this task."""
-        q = f"""
-        PREFIX dct: <http://purl.org/dc/terms/>
-        PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+        q = Template(
+            """
+            PREFIX dct: <http://purl.org/dc/terms/>
+            PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
 
-        SELECT ?codelist
-        WHERE {{
-            {sparql_escape_uri(self.task_uri)} dct:isPartOf ?job .
-            ?job ext:codelist ?codelist .
-        }}
-        """
+            SELECT ?codelist
+            WHERE {
+                $task dct:isPartOf ?job .
+                ?job ext:codelist ?codelist .
+            }
+            """
+        ).substitute(task=sparql_escape_uri(self.task_uri))
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
         if not bindings:
@@ -120,14 +123,16 @@ class CodeListTask(DecisionTask, ABC):
         return Codelist.from_uri(codelist_uri)
     
     def get_target_graph(self) -> str:
-        q = f"""
-        PREFIX dct: <http://purl.org/dc/terms/>
-        PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
-        SELECT ?graph WHERE {{
-            <{self.task_uri}> dct:isPartOf ?job .
-            ?job ext:graphForTargets ?graph .
-        }}
-        """
+        q = Template(
+            """
+            PREFIX dct: <http://purl.org/dc/terms/>
+            PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+            SELECT ?graph WHERE {
+                $task dct:isPartOf ?job .
+                ?job ext:graphForTargets ?graph .
+            }
+            """
+        ).substitute(task=sparql_escape_uri(self.task_uri))
         res = query(q, sudo=True)
         bindings = res.get("results", {}).get("bindings", [])
         if not bindings:

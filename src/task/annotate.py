@@ -171,18 +171,19 @@ class ModelAnnotatingTask(CodeListTask):
 
         q = Template(
             get_prefixes_for_query("task", "nfo", "mu") +
-            f"""
-            INSERT DATA {{
-            GRAPH <{GRAPHS["data_containers"]}> {{
-                $container a nfo:DataContainer ;
-                    mu:uuid "$uuid" ;
-                    task:hasResource $resource .
-            }}
-            }}
+            """
+            INSERT DATA {
+                GRAPH $graph {
+                    $container a nfo:DataContainer ;
+                        mu:uuid $uuid ;
+                        task:hasResource $resource .
+                }
+            }
             """
         ).substitute(
+            graph=sparql_escape_uri(GRAPHS["data_containers"]),
             container=sparql_escape_uri(container_uri),
-            uuid=container_id,
+            uuid=sparql_escape_string(container_id),
             resource=sparql_escape_uri(resource)
         )
 
