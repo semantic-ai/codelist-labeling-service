@@ -4,7 +4,7 @@ from string import Template
 
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
 from .codelist import CodeListTask
-from ..llm_models.llm_model_clients import create_llm_model
+from ..llm_models.llm_model_clients import create_llm_client
 from ..config import get_config
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -51,20 +51,23 @@ class PolicyLabel(BaseModel):
 
 
 class ImpactAssessmentTask(CodeListTask):
-    """Task that links the correct code from a list to text."""
+    """Task that assesses the policy impact direction (positive/negative/uncertain) of existing codelist annotations using an LLM."""
 
-    __task_type__ = TASK_OPERATIONS["impact_assessment"]
+    __task_type__ = TASK_OPERATIONS["codelist_assess_impact"]
 
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
         config = get_config()
-        self.llm = create_llm_model(config.llm).with_structured_output(ImpactAssessment)
+        self.llm = create_llm_client(config.llm)._chat_model.with_structured_output(ImpactAssessment)
         self.provider = config.llm.provider
 
-    def fetch_eli_expressions(self) -> list[ProcessItem]:
+    def fetch_eli_expressions(self, target_graph: str) -> list[ProcessItem]:
         """
         Retrieve ELI expressions, their epvoc:expressionContent,
         language, and corresponding ELI work URI from the task's input container.
+
+        Args:
+            target_graph: String containing the URI of the graph to query for ELI expressions
 
         Returns:
             Dictionary containing:
@@ -76,26 +79,30 @@ class ImpactAssessmentTask(CodeListTask):
         q = Template(
             get_prefixes_for_query("task", "epvoc", "eli") +
             f"""
-            SELECT ?expression ?content ?lang ?work WHERE {{
-            GRAPH {sparql_escape_uri(GRAPHS["jobs"])} {{
-                $task task:inputContainer ?container .
-            }}
+            SELECT 
+                ?expression
+                ?lang
+                ?work
+                (GROUP_CONCAT(?cont;separator="") AS ?content)                
+            WHERE {{
+                GRAPH {sparql_escape_uri(GRAPHS["jobs"])} {{
+                    $task task:inputContainer ?container .
+                }}
 
-            GRAPH {sparql_escape_uri(GRAPHS["data_containers"])} {{
-                ?container task:hasResource ?expression .
-            }}
+                GRAPH {sparql_escape_uri(GRAPHS["data_containers"])} {{
+                    ?container task:hasResource ?expression .
+                }}
 
-            GRAPH {sparql_escape_uri(GRAPHS["expressions"])} {{
-                ?expression a eli:Expression ;
-                            epvoc:expressionContent ?content ;
-                            eli:language ?lang .
-            }}
+                GRAPH {sparql_escape_uri(target_graph)} {{
+                    ?expression a eli:Expression ;
+                                epvoc:expressionContent ?cont ;
+                                eli:language ?lang .
 
-            GRAPH {sparql_escape_uri(GRAPHS["works"])} {{
-                ?work a eli:Work ;
-                    eli:is_realized_by ?expression .
+                    ?work a eli:Work ;
+                        eli:is_realized_by ?expression .
+                }}
             }}
-            }}
+            GROUP BY ?expression ?lang ?work
             """
         ).substitute(task=sparql_escape_uri(self.task_uri))
 
@@ -124,7 +131,7 @@ class ImpactAssessmentTask(CodeListTask):
     def fetch_policy_labels(self, expression_uri: str) -> list[PolicyLabel]:
         concept_scheme_uri = self.fetch_codelist_uri_for_task()
         q = Template(
-            get_prefixes_for_query("oa", "skos") +
+            get_prefixes_for_query("oa", "skos", "ext") +
             """
             SELECT ?annotation ?concept ?label
             WHERE {
@@ -133,6 +140,10 @@ class ImpactAssessmentTask(CodeListTask):
                             oa:motivatedBy oa:classifying ;
                             oa:hasTarget $expression_uri ;
                             oa:hasBody ?concept .
+                
+                FILTER NOT EXISTS {
+                  ?concept a ext:NoMatchFound .
+                }
               }
               GRAPH $concept_graph {
                 ?concept a skos:Concept ;
@@ -150,7 +161,7 @@ class ImpactAssessmentTask(CodeListTask):
         bindings = query(q, sudo=True).get("results", {}).get("bindings", [])
         if not bindings:
             self.logger.warning(
-                f"No expressions found in input container for task {self.task_uri}")
+                f"No policy labels (excluding no-match-found) found for expression {expression_uri}")
             return []
 
         return [
@@ -239,7 +250,48 @@ class ImpactAssessmentTask(CodeListTask):
 
 
     def process(self):
-        for process_item in self.fetch_eli_expressions():
+        target_graph = self.get_target_graph()
+
+        for process_item in self.fetch_eli_expressions(target_graph):
             for policy_label in self.fetch_policy_labels(process_item.expression_uri):
                 assessment = self._process_single(process_item, policy_label)
                 self.store(policy_label.annotation_uri, assessment)
+                
+                # Append the input annotation URI to the results' output containers.
+                container_uri = self.create_output_container(policy_label.annotation_uri)
+                self.results_container_uris.append(container_uri)
+
+    def create_output_container(self, resource: str) -> str:
+        """
+        Function to create an output data container for an assessment annotation.
+
+        Args:
+            resource: String containing the URI of the assessed annotation
+
+        Returns:
+            String containing the URI of the output data container
+        """
+        import uuid
+        container_id = str(uuid.uuid4())
+        container_uri = f"http://data.lblod.info/id/data-container/{container_id}"
+
+        q = Template(
+            get_prefixes_for_query("task", "nfo", "mu") +
+            """
+            INSERT DATA {
+                GRAPH $graph {
+                    $container a nfo:DataContainer ;
+                        mu:uuid $uuid ;
+                        task:hasResource $resource .
+                }
+            }
+            """
+        ).substitute(
+            graph=sparql_escape_uri(GRAPHS["data_containers"]),
+            container=sparql_escape_uri(container_uri),
+            uuid=sparql_escape_string(container_id),
+            resource=sparql_escape_uri(resource)
+        )
+
+        update(q, sudo=True)
+        return container_uri

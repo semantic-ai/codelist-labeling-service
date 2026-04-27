@@ -1,5 +1,7 @@
 import logging
 import random
+import time
+import uuid
 from string import Template
 from helpers import query, update
 from escape_helpers import sparql_escape_uri, sparql_escape_string
@@ -12,7 +14,7 @@ from decide_ai_service_base.annotation import LinkingAnnotation
 
 from ..llm_models.llm_model_clients import create_llm_client
 from ..llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
-from .codelist import CodelistEntry, CodeListTask
+from .codelist import Codelist, CodelistEntry, CodeListTask
 from ..config import get_config
 
 
@@ -21,15 +23,13 @@ class ModelAnnotatingTask(CodeListTask):
 
     __task_type__ = TASK_OPERATIONS["model_annotation"]
 
-    def __init__(self, task_uri: str, source: str | None = None, codelist_entries: list[CodelistEntry] | None = None):
+    def __init__(self, task_uri: str, source: str, codelist_entries: Codelist):
         super().__init__(task_uri)
-        if source is not None:
-            self.source = source
+        self.source = source
 
         config = get_config()
 
-        # Codelist: use provided entries or resolve dynamically from the job
-        self._codelist_entries = codelist_entries if codelist_entries is not None else self.fetch_codelist()
+        self._codelist_entries = codelist_entries
         self._label_to_uri = self._codelist_entries.build_label_to_uri_map()
 
         # LLM setup
@@ -64,23 +64,35 @@ class ModelAnnotatingTask(CodeListTask):
             return
 
         classes: list[str] = []
-        if self._provider == "random" or self._llm is None:
+        if self._provider == "random":
             self.logger.warning("Using random label (provider=random).")
             classes = [random.choice(labels)]
+        elif self._llm is None:
+            self.logger.error("No LLM client available; skipping model annotation.")
+            return
         else:
-            try:
-                llm_input = LlmTaskInput(system_message=self._llm_system_message,
-                                         user_message=self._llm_user_message.format(
-                                             code_list=labels, decision_text=task_data),
-                                         assistant_message=None,
-                                         output_format=EntityLinkingTaskOutput)
+            max_retries = 3
+            llm_input = LlmTaskInput(system_message=self._llm_system_message,
+                                     user_message=self._llm_user_message.format(
+                                         code_list=labels, decision_text=task_data),
+                                     assistant_message=None,
+                                     output_format=EntityLinkingTaskOutput)
 
-                response = self._llm(llm_input)
-                classes = response.designated_classes
-            except Exception as exc:
-                self.logger.warning(
-                    f"LLM call failed ({exc}); using random label as fallback.")
-                classes = [random.choice(labels)]
+            for attempt in range(1, max_retries + 1):
+                try:
+                    response = self._llm(llm_input)
+                    classes = response.designated_classes
+                    break
+                except Exception as exc:
+                    if attempt == max_retries:
+                        self.logger.warning(
+                            f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
+                    else:
+                        self.logger.warning(
+                            f"LLM call attempt {attempt}/{max_retries} failed ({exc}); retrying.")
+                        time.sleep(attempt)
+
+        self.logger.warning(f"LLM returned classes: {classes}")
 
         for c in classes:
             concept_uri = self._codelist_entries.resolve_label_to_uri(c, self._label_to_uri)
@@ -96,6 +108,14 @@ class ModelAnnotatingTask(CodeListTask):
                 AGENT_TYPES["ai_component"]
             )
             annotation.add_to_triplestore_if_not_exists()
+            self.logger.warning("Created SDG annotation")
+
+        if classes:
+            self.results_container_uris.append(self.create_output_container(self.source))
+        else:
+            self.store_no_match()
+
+        
     
     def store_no_match(self):
         id = uuid.uuid4()
@@ -129,53 +149,98 @@ class ModelAnnotatingTask(CodeListTask):
                 AGENT_TYPES["ai_component"]
             )
             annotation.add_to_triplestore_if_not_exists()
+            self.results_container_uris.append(self.create_output_container(self.source))
         except Exception as e:
             error_msg = f"Failed to insert no-match-found: {e}"
             self.logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
+            
 
+    def create_output_container(self, resource: str) -> str:
+        """
+        Function to create an output data container for an annotation.
+
+        Args:
+            resource: String containing an annotation URI
+
+        Returns:
+            String containing the URI of the output data container
+        """
+        container_id = str(uuid.uuid4())
+        container_uri = f"http://data.lblod.info/id/data-container/{container_id}"
+
+        q = Template(
+            get_prefixes_for_query("task", "nfo", "mu") +
+            """
+            INSERT DATA {
+                GRAPH $graph {
+                    $container a nfo:DataContainer ;
+                        mu:uuid $uuid ;
+                        task:hasResource $resource .
+                }
+            }
+            """
+        ).substitute(
+            graph=sparql_escape_uri(GRAPHS["data_containers"]),
+            container=sparql_escape_uri(container_uri),
+            uuid=sparql_escape_string(container_id),
+            resource=sparql_escape_uri(resource)
+        )
+
+        update(q, sudo=True)
+        return container_uri
 
 class ModelBatchAnnotatingTask(CodeListTask):
     """Task that creates ModelAnnotatingTasks for all decisions that are not yet annotated."""
 
-    __task_type__ = TASK_OPERATIONS["model_batch_annotation"]
+    __task_type__ = TASK_OPERATIONS["codelist_annotation"]
 
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
 
     def process(self):
         codelist_entries = self.fetch_codelist()
-        decision_uris = self.fetch_decisions_without_annotations()
+        target_graph = self.get_target_graph()
+        decision_uris = self.fetch_decisions_without_annotations(target_graph, codelist_entries.concept_scheme_uri)
         print(f"{len(decision_uris)} decisions to process.", flush=True)
 
         for i, decision_uri in enumerate(decision_uris):
-            ModelAnnotatingTask(self.task_uri, decision_uri, codelist_entries=codelist_entries).process()
-            print(f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
+            task = ModelAnnotatingTask(self.task_uri, decision_uri, codelist_entries=codelist_entries)
+            task.process()
+            self.results_container_uris.extend(task.results_container_uris)
+
+            print(
+                f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
+    
 
     @staticmethod
-    def fetch_decisions_without_annotations() -> list[str]:
-        # TODO this one should accept a codelist and filter on annotations to concepts of that codelist (or no match founds for that codelist, else you can only annotate with one codelist)
+    def fetch_decisions_without_annotations(target_graph: str, concept_scheme_uri: str) -> list[str]:
         # TODO: use ext:shapeForTargets (and optionally ext:graphForTargets) from the job to scope which decisions to fetch
-        q = Template(get_prefixes_for_query("rdf", "eli", "oa") + """
+        q = Template(get_prefixes_for_query("rdf", "eli", "oa", "skos", "ext") + """
         SELECT DISTINCT ?s
         WHERE {
-            GRAPH ?dataGraph {
+            GRAPH $target_graph {
                 ?s rdf:type eli:Expression .
             }
             FILTER NOT EXISTS {
-                GRAPH $graph {
-                ?ann a oa:Annotation ;
-                    oa:hasTarget ?s ;
-                    oa:motivatedBy oa:classifying .
+                VALUES ?g { $target_graph $ai_graph }
+                GRAPH ?g {
+                    ?ann a oa:Annotation ;
+                         oa:hasTarget ?s ;
+                         oa:motivatedBy oa:classifying ;
+                         oa:hasBody ?concept .
+                    
+                    ?concept skos:inScheme|ext:forConceptScheme $concept_scheme_uri .
                 }
             }
         }
         """).substitute(
-            graph=sparql_escape_uri(GRAPHS['ai'])
+            target_graph=sparql_escape_uri(target_graph), 
+            ai_graph=sparql_escape_uri(GRAPHS['ai']),
+            concept_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
+            concept_scheme_uri=sparql_escape_uri(concept_scheme_uri)
         )
 
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
-        decision_uris = [b["s"]["value"] for b in bindings if "s" in b]
-
-        return decision_uris
+        return [b["s"]["value"] for b in bindings if "s" in b]
