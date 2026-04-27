@@ -1,9 +1,10 @@
+import uuid
 from string import Template
-from helpers import query
+from helpers import query, update
 from decide_ai_service_base.sparql_config import AGENT_TYPES, TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
 from decide_ai_service_base.annotation import LinkingAnnotation
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from escape_helpers import sparql_escape_uri
+from escape_helpers import sparql_escape_uri, sparql_escape_string
 
 from .codelist import CodeListTask
 from ..classifier.predict import predict as classifier_predict
@@ -70,20 +71,12 @@ class ClassifierAnnotatingTask(CodeListTask):
                     OPTIONAL { ?s epvoc:expressionContent ?content }
                 }
                 FILTER NOT EXISTS {
-                    {
-                        GRAPH $target_graph {
-                            ?ann a oa:Annotation ;
-                                oa:hasTarget ?s ;
-                                oa:motivatedBy oa:classifying ;
-                                oa:hasBody ?annotatedConcept .
-                        }
-                    } UNION {
-                        GRAPH $ai_graph {
-                            ?ann a oa:Annotation ;
-                                oa:hasTarget ?s ;
-                                oa:motivatedBy oa:classifying ;
-                                oa:hasBody ?annotatedConcept .
-                        }
+                    VALUES ?g { $target_graph $ai_graph }
+                    GRAPH ?g {
+                        ?ann a oa:Annotation ;
+                            oa:hasTarget ?s ;
+                            oa:motivatedBy oa:classifying ;
+                            oa:hasBody ?annotatedConcept .
                     }
                     GRAPH $public_graph {
                         ?annotatedConcept skos:inScheme $concept_scheme_uri .
@@ -186,7 +179,33 @@ class ClassifierAnnotatingTask(CodeListTask):
                 )
                 annotation.add_to_triplestore_if_not_exists()
 
+            self.results_container_uris.append(self.create_output_container(uri))
             print(
                 f"Classified {i+1}/{len(decisions)}: {uri} → {[l for l, _ in predictions]}",
                 flush=True,
             )
+
+    def create_output_container(self, resource: str) -> str:
+        container_id = str(uuid.uuid4())
+        container_uri = f"http://data.lblod.info/id/data-container/{container_id}"
+
+        q = Template(
+            get_prefixes_for_query("task", "nfo", "mu") +
+            """
+            INSERT DATA {
+                GRAPH $graph {
+                    $container a nfo:DataContainer ;
+                        mu:uuid $uuid ;
+                        task:hasResource $resource .
+                }
+            }
+            """
+        ).substitute(
+            graph=sparql_escape_uri(GRAPHS["data_containers"]),
+            container=sparql_escape_uri(container_uri),
+            uuid=sparql_escape_string(container_id),
+            resource=sparql_escape_uri(resource)
+        )
+
+        update(q, sudo=True)
+        return container_uri

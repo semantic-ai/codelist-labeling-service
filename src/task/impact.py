@@ -76,14 +76,15 @@ class ImpactAssessmentTask(CodeListTask):
                 - "languages": list containing the language URIs of the expressions
                 - "work_uris": list containing the work URIs of the expressions
         """
+        concept_scheme_uri = self.fetch_codelist_uri_for_task()
         q = Template(
-            get_prefixes_for_query("task", "epvoc", "eli") +
+            get_prefixes_for_query("task", "epvoc", "eli", "oa", "skos") +
             f"""
             SELECT 
                 ?expression
                 ?lang
                 ?work
-                (GROUP_CONCAT(?cont;separator="") AS ?content)                
+                (GROUP_CONCAT(?cont;separator="") AS ?content)
             WHERE {{
                 GRAPH {sparql_escape_uri(GRAPHS["jobs"])} {{
                     $task task:inputContainer ?container .
@@ -101,10 +102,36 @@ class ImpactAssessmentTask(CodeListTask):
                     ?work a eli:Work ;
                         eli:is_realized_by ?expression .
                 }}
+
+                FILTER EXISTS {{
+                    GRAPH $ai_graph {{
+                        ?ann a oa:Annotation ;
+                             oa:hasTarget ?expression ;
+                             oa:motivatedBy oa:classifying ;
+                             oa:hasBody ?annConcept .
+                        FILTER NOT EXISTS {{
+                            ?ann oa:hasBody ?anyImpact .
+                            FILTER(?anyImpact IN (
+                                <http://mu.semte.ch/vocabularies/ext/impact/positive>,
+                                <http://mu.semte.ch/vocabularies/ext/impact/negative>,
+                                <http://mu.semte.ch/vocabularies/ext/impact/neutral>,
+                                <http://mu.semte.ch/vocabularies/ext/impact/unknown>
+                            ))
+                        }}
+                    }}
+                    GRAPH $public_graph {{
+                        ?annConcept skos:inScheme $concept_scheme_uri .
+                    }}
+                }}
             }}
             GROUP BY ?expression ?lang ?work
             """
-        ).substitute(task=sparql_escape_uri(self.task_uri))
+        ).substitute(
+            task=sparql_escape_uri(self.task_uri),
+            ai_graph=sparql_escape_uri(GRAPHS["ai"]),
+            public_graph=sparql_escape_uri(GRAPHS["public"]),
+            concept_scheme_uri=sparql_escape_uri(concept_scheme_uri),
+        )
 
         bindings = query(q, sudo=True).get("results", {}).get("bindings", [])
         if not bindings:
@@ -154,7 +181,7 @@ class ImpactAssessmentTask(CodeListTask):
             """
         ).substitute(
             annotation_graph=sparql_escape_uri(GRAPHS['ai']),
-            concept_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
+            concept_graph=sparql_escape_uri(GRAPHS["public"]),
             expression_uri=sparql_escape_uri(expression_uri),
             concept_scheme_uri=sparql_escape_uri(concept_scheme_uri)
         )
@@ -216,7 +243,7 @@ class ImpactAssessmentTask(CodeListTask):
             ImpactDirection.UNCERTAIN: 'http://mu.semte.ch/vocabularies/ext/impact/unknown'
         }
 
-        query_string = Template(get_prefixes_for_query("oa", "ext", "xsd", "skos") +
+        query_string = Template(get_prefixes_for_query("oa", "ext", "xsd") +
         """
         INSERT {
             GRAPH $graph {
@@ -228,7 +255,12 @@ class ImpactAssessmentTask(CodeListTask):
                 $annotation_uri a oa:Annotation .
                 FILTER NOT EXISTS { 
                     $annotation_uri oa:hasBody ?anyImpact .
-                    ?anyImpact skos:inScheme $impact_scheme . 
+                    FILTER(?anyImpact IN (
+                        <http://mu.semte.ch/vocabularies/ext/impact/positive>,
+                        <http://mu.semte.ch/vocabularies/ext/impact/negative>,
+                        <http://mu.semte.ch/vocabularies/ext/impact/neutral>,
+                        <http://mu.semte.ch/vocabularies/ext/impact/unknown>
+                    ))
                 }
             }
         }
@@ -237,7 +269,6 @@ class ImpactAssessmentTask(CodeListTask):
             graph=sparql_escape_uri(GRAPHS['ai']),
             annotation_uri=sparql_escape_uri(annotation_uri),
             assessment=sparql_escape_uri(mapping[assessment.impact_direction]),
-            impact_scheme=sparql_escape_uri("http://mu.semte.ch/vocabularies/ext/impact")
         )
 
 
