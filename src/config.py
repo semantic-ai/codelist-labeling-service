@@ -105,6 +105,37 @@ class MLInferenceConfig(BaseModel):
     )
 
 
+class CodelistPromptConfig(BaseModel):
+    """Prompt configuration for a specific codelist."""
+
+    system_message: str = Field(
+        description="System message for the LLM"
+    )
+    user_message: str = Field(
+        description="User message template with {code_list} and {decision_text} placeholders"
+    )
+
+
+DEFAULT_SYSTEM_MESSAGE = (
+    "You are a juridical and administrative assistant that must determine "
+    "the best matching codes from a list with a given text."
+)
+DEFAULT_USER_MESSAGE = (
+    "Determine the best matching codes from the following list for the given public decision.\n\n"
+    '"""'
+    "CODE LIST:\n"
+    "{code_list}\n"
+    '"""\n\n'
+    '"""'
+    "DECISION TEXT:\n"
+    "{decision_text}\n"
+    '"""'
+    "Provide your answer as a list of strings representing the matching codes. "
+    "Provide all matching codes (can be a single one), but only those that are truly matching "
+    "and only from the given list! If none of the codes match, return an empty list."
+)
+
+
 class AppConfig(BaseModel):
     """Root application configuration model."""
 
@@ -122,6 +153,19 @@ class AppConfig(BaseModel):
         default_factory=MLInferenceConfig,
         description="Machine learning inference configuration"
     )
+    codelist_prompts: dict[str, CodelistPromptConfig] = Field(
+        default_factory=lambda: {
+            "default": CodelistPromptConfig(
+                system_message=DEFAULT_SYSTEM_MESSAGE,
+                user_message=DEFAULT_USER_MESSAGE,
+            )
+        },
+        description="Prompt configurations keyed by codelist URI, with 'default' as fallback"
+    )
+
+    def get_codelist_prompt(self, codelist_uri: str) -> CodelistPromptConfig:
+        """Return the prompt config for a codelist URI, falling back to 'default'."""
+        return self.codelist_prompts.get(codelist_uri, self.codelist_prompts["default"])
 
 
 def get_config() -> AppConfig:

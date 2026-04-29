@@ -23,30 +23,21 @@ class ModelAnnotatingTask(CodeListTask):
 
     __task_type__ = TASK_OPERATIONS["model_annotation"]
 
-    def __init__(self, task_uri: str, source: str, codelist_entries: Codelist):
+    def __init__(self, task_uri: str):
         super().__init__(task_uri)
-        self.source = source
 
         config = get_config()
 
-        self._codelist_entries = codelist_entries
+        self._codelist_entries = self.fetch_codelist()
         self._label_to_uri = self._codelist_entries.build_label_to_uri_map()
 
         # LLM setup
         self._llm = create_llm_client(config.llm)
         self._provider = config.llm.provider
 
-        self._llm_system_message = "You are a juridical and administrative assistant that must determine the best matching codes from a list with a given text."
-        self._llm_user_message = "Determine the best matching codes from the following list for the given public decision.\n\n" \
-            "\"\"\"" \
-            "CODE LIST:\n" \
-            "{code_list}\n" \
-            "\"\"\"\n\n" \
-            "\"\"\"" \
-            "DECISION TEXT:\n" \
-            "{decision_text}\n" \
-            "\"\"\"" \
-            "Provide your answer as a list of strings representing the matching codes. Provide all matching codes (can be a single one), but only those that are truly matching and only from the given list! If none of the codes match, return an empty list."
+        prompt = config.get_codelist_prompt(self._codelist_entries.concept_scheme_uri)
+        self._llm_system_message = prompt.system_message
+        self._llm_user_message = prompt.user_message
 
     def process(self):
         # TODO: read ext:propertyPathForText from the job and pass it to fetch_data() instead of hardcoding epvoc:expressionContent
@@ -58,10 +49,12 @@ class ModelAnnotatingTask(CodeListTask):
                 "No task data found; skipping model annotation.")
             return
 
-        labels = [entry.label for entry in self._codelist_entries]
+        labels = self._codelist_entries.get_labels()
         if not labels:
             self.logger.error("No concepts found in codelist; skipping model annotation.")
             return
+
+        labels_for_prompt = self._codelist_entries.get_labels_with_definitions()
 
         classes: list[str] = []
         if self._provider == "random":
@@ -74,14 +67,19 @@ class ModelAnnotatingTask(CodeListTask):
             max_retries = 3
             llm_input = LlmTaskInput(system_message=self._llm_system_message,
                                      user_message=self._llm_user_message.format(
-                                         code_list=labels, decision_text=task_data),
+                                         code_list=labels_for_prompt, decision_text=task_data),
                                      assistant_message=None,
                                      output_format=EntityLinkingTaskOutput)
+
 
             for attempt in range(1, max_retries + 1):
                 try:
                     response = self._llm(llm_input)
                     classes = response.designated_classes
+
+                    self.logger.info(f"[ModelAnnotatingTask] Calling LLM with input: {llm_input}")
+                    self.logger.info(f"[ModelAnnotatingTask] LLM response: {response}")
+
                     break
                 except Exception as exc:
                     if attempt == max_retries:

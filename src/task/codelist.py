@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 class CodelistEntry(BaseModel):
     uri: str = Field(description="URI of the SKOS concept")
     label: str = Field(description="Label of the concept")
+    definition: str | None = Field(default=None, description="Optional skos:definition of the concept")
 
 
 class Codelist(list[CodelistEntry]):
@@ -23,16 +24,19 @@ class Codelist(list[CodelistEntry]):
 
     @classmethod
     def from_uri(cls, concept_scheme_uri: str) -> 'Codelist':
-        # TODO: also fetch skos:definition to give the LLM more context for classification
         """Fetch all SKOS concepts from a concept scheme in the triplestore."""
         q = f"""
         PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 
-        SELECT ?concept ?label
+        SELECT ?concept ?label ?definition
         WHERE {{
             ?concept skos:inScheme {sparql_escape_uri(concept_scheme_uri)} ;
                      skos:prefLabel ?label .
             FILTER(LANG(?label) = "en" || LANG(?label) = "")
+            OPTIONAL {{
+                ?concept skos:definition ?definition .
+                FILTER(LANG(?definition) = "en" || LANG(?definition) = "")
+            }}
         }}
         """
 
@@ -42,7 +46,8 @@ class Codelist(list[CodelistEntry]):
         entries = [
             CodelistEntry(
                 uri=b["concept"]["value"],
-                label=b["label"]["value"]
+                label=b["label"]["value"],
+                definition=b["definition"]["value"] if "definition" in b else None,
             )
             for b in bindings
             if "concept" in b and "label" in b
@@ -68,6 +73,21 @@ class Codelist(list[CodelistEntry]):
 
     def get_labels(self) -> list[str]:
         return [entry.label for entry in self]
+
+    def get_labels_with_definitions(self) -> str:
+        """Return a prompt-ready string listing labels and, when available,
+        a separate mapping of labels to their definitions.
+
+        The labels are always listed first so the LLM knows which values
+        to return.  Definitions are appended as supplementary context only
+        when at least one entry has a ``skos:definition``.
+        """
+        labels = self.get_labels()
+        definitions = {entry.label: entry.definition for entry in self if entry.definition}
+
+        if definitions:
+            return f"{labels}\n\nLabel descriptions:\n{definitions}"
+        return str(labels)
 
     def resolve_label_to_uri(self, label: str, label_to_uri: dict[str, str]) -> str | None:
         """Resolve an LLM-returned label to a concept URI.
