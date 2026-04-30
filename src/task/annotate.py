@@ -76,10 +76,7 @@ class ModelAnnotatingTask(CodeListTask):
                 try:
                     response = self._llm(llm_input)
                     classes = response.designated_classes
-
-                    self.logger.info(f"[ModelAnnotatingTask] Calling LLM with input: {llm_input}")
-                    self.logger.info(f"[ModelAnnotatingTask] LLM response: {response}")
-
+                    
                     break
                 except Exception as exc:
                     if attempt == max_retries:
