@@ -22,3 +22,8 @@ evaluate_translation.py
 projection.ipynb
 config_dev.json
 testing.ipynb
+/Documentation
+/evaluation
+/custom-config
+docker-compose-standalone.yml
+test_task_flow.ipynb
