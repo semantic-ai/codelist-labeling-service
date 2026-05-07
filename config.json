@@ -15,9 +15,23 @@
     "huggingface_token": null,
     "huggingface_output_model_id": null
   },
-  "ml_inference": {
+    "ml_inference": {
     "huggingface_model_id": null,
     "huggingface_token": null,
     "confidence_threshold": 0.5
+  },
+  "codelist_prompts": {
+    "default": {
+      "system_message": "You are a juridical and administrative assistant that must determine the best matching codes from a list with a given text.",
+      "user_message": "Determine the best matching codes from the following list for the given public decision.\n\n\"\"\"CODE LIST:\n{code_list}\n\"\"\"\n\n\"\"\"DECISION TEXT:\n{decision_text}\n\"\"\"Provide your answer as a list of strings representing the matching codes. You MUST only return values that appear EXACTLY in the CODE LIST above, NOT from the label descriptions. Provide all matching codes (can be a single one), but only those that are truly matching. If none of the codes match, return an empty list."
+    },
+    "http://data.lblod.gift/id/conceptscheme/sdg-simple": {
+      "system_message": "You are an expert at classifying administrative decision texts against the UN Sustainable Development Goals (SDGs 1\u201317). You identify ALL applicable SDGs based on concrete decisions, actions, commitments, or implementations mentioned in the text. You respond only with valid JSON.",
+      "user_message": "Analyze the administrative decision text below and determine which codes from the reference list apply.\n\nCRITICAL RULES:\n- Assign a code when the text describes a DECISION, ACTION, COMMITMENT, or IMPLEMENTATION that relates to the code's topic\n- A single text can match MULTIPLE codes \u2014 return ALL that apply\n- Do NOT assign codes for questions, discussions without decisions, or proposals that were not approved\n- If none of the codes apply, return an empty list\n- Return the code numbers (the values in square brackets) as strings\n\nGuidance for SDG 16 (Peace, Justice and Strong Institutions):\n- Do NOT assign for purely internal administrative actions (financial plans, routine procurement, statutory powers) unless the text explicitly targets transparency, rule of law, access to justice, citizen participation, public safety, or anti-corruption\n\nREFERENCE LIST:\n{code_list}\n\nDECISION TEXT:\n\"\"\"\n{decision_text}\n\"\"\"\n\nReturn ALL matching code numbers as a list of strings."
+    },
+    "http://data.lblod.gift/id/conceptscheme/restricted-mobility-zone-simple": {
+      "system_message": "You are an expert in municipal decision texts. The input is a single decision. Determine whether it describes an implemented or enforceable Restricted Mobility Zone. You respond only with valid JSON.",
+      "user_message": "Analyze the administrative decision text below and determine whether it concerns ANY kind of Restricted Mobility Zone.\n\nA Restricted Mobility Zone is any clearly defined measure that restricts or regulates traffic or parking in a specific public space. Examples include: reserved parking spaces, school streets, bicycle zones, home zones (woonerf), pedestrian zones, car-free zones, zero/low emission zones, works occupying public domain, or events affecting traffic.\n\nTo qualify, the measure MUST:\n- Specify a concrete location (street, zone, or area)\n- Define a period of validity (start/end date, recurring schedule, or explicitly permanent)\n- Have a direct impact on traffic or parking (restriction, prohibition, prioritization, or occupation of public space)\n\nDo NOT qualify:\n- Items without a clear location\n- Items without a defined time period (unless explicitly permanent)\n- Plans, proposals, or discussions without implemented measures\n- Decisions that do not affect traffic or parking in practice\n\nDECISION TEXT:\n\"\"\"\n{decision_text}\n\"\"\"\n\nIf the text concerns ANY kind of restricted mobility zone, return [\"Restrictive mobility zone\"].\nIf it does NOT concern a restricted mobility zone, return an empty list []."
+    }
   }
 }
