@@ -13,7 +13,8 @@ def build_airo_model_insert_query(
     hf_repo_url: str,
     hf_tree_url: str,
     source_repo_url: str,
-    results: dict
+    results: dict,
+    codelist_uri: str,
 ) -> str:
     base = SPARQL_PREFIXES["airo"]
     prefixes = get_prefixes_for_query(
@@ -49,6 +50,7 @@ INSERT DATA {
     ${model_uri} a airo:AIModel ;
         dcterms:source ${hf_tree_anyuri} ;
         dcterms:title ${hub_model_id_str} ;
+        airo:producesOutput ${codelist_uri_anyuri} ;
         ${qm_line}
         airo:hasInput ${input_uri} ;
         airo:hasVersion ${version_uri} ;
@@ -93,7 +95,37 @@ ${qm_nodes}
         input_type_str=sparql_escape_string("string"),
         source_repo_anyuri=sparql_escape_uri(source_repo_url),
         commit_oid_str=sparql_escape_string(commit_oid),
-        qm_nodes=qm_nodes
+        qm_nodes=qm_nodes,
+        codelist_uri_anyuri=sparql_escape_uri(codelist_uri),
     )
 
     return query
+
+
+def fetch_models_for_codelist(codelist_uri: str) -> list[dict]:
+    """Return [{model_uri, hub_model_id}, ...] for all models registered with
+    airo:producesOutput <codelist_uri>."""
+    from helpers import query
+
+    q = Template(
+        get_prefixes_for_query("airo", "dcterms") + """
+        SELECT ?model_uri ?hub_model_id WHERE {
+            GRAPH ${graph} {
+                ?model_uri a airo:AIModel ;
+                           airo:producesOutput ${codelist_uri} ;
+                           dcterms:title ?hub_model_id .
+            }
+        }
+        """
+    ).substitute(
+        graph=sparql_escape_uri(GRAPHS["ai"]),
+        codelist_uri=sparql_escape_uri(codelist_uri),
+    )
+    response = query(q, sudo=True)
+    return [
+        {
+            "model_uri": b["model_uri"]["value"],
+            "hub_model_id": b["hub_model_id"]["value"],
+        }
+        for b in response.get("results", {}).get("bindings", [])
+    ]
