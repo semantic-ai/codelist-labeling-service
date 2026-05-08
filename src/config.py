@@ -89,10 +89,6 @@ class MLTrainingConfig(BaseModel):
 class MLInferenceConfig(BaseModel):
     """Machine Learning inference configuration."""
 
-    huggingface_model_id: str | None = Field(
-        default=None,
-        description="HuggingFace model ID to load for inference"
-    )
     huggingface_token: SecretStr | None = Field(
         default=None,
         description="HuggingFace API token for downloading private models"

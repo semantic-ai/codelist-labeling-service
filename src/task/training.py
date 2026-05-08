@@ -33,6 +33,7 @@ class ClassifierTrainingTask(CodeListTask):
             decisions,
             codelist_entries.get_labels(),
             ml_config.huggingface_output_model_id,
+            codelist_uri=codelist_entries.concept_scheme_uri,
             transformer=ml_config.transformer,
             learning_rate=ml_config.learning_rate,
             epochs=ml_config.epochs,

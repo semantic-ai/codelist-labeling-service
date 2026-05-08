@@ -8,17 +8,15 @@ from escape_helpers import sparql_escape_uri, sparql_escape_string
 
 from .codelist import CodeListTask
 from ..classifier.predict import predict as classifier_predict
+from ..classifier.ld import fetch_models_for_codelist
 from ..config import get_config
 
 
 class ClassifierAnnotatingTask(CodeListTask):
-    """Runs a trained HuggingFace classifier on unlabeled decisions to produce codelist annotations at scale."""
+    """Runs all trained HuggingFace classifiers registered for the task's codelist on unlabeled
+    decisions, producing one annotation per model (attributed via prov:wasAssociatedWith)."""
 
     __task_type__ = TASK_OPERATIONS["codelist_classifier_annotation"]
-
-    # AI_COMPONENTS in decide-ai-service-base has no classifier entry yet;
-    # hardcoded so classifier annotations are distinguishable from LLM annotations in provenance queries.
-    _CLASSIFIER_AGENT_URI = "http://data.lblod.info/id/ai-components/classifier-annotation"
 
     def get_target_graph(self) -> str | None:
         q = Template(
@@ -109,12 +107,6 @@ class ClassifierAnnotatingTask(CodeListTask):
         config = get_config()
         inference_cfg = config.ml_inference
 
-        if not inference_cfg.huggingface_model_id:
-            raise RuntimeError(
-                "ml_inference.huggingface_model_id is not set in config.json. "
-                "Run ClassifierTrainingTask first and set the output model ID here."
-            )
-
         target_graph = self.get_target_graph()
         if not target_graph:
             raise RuntimeError(f"No ext:graphForTargets found for task {self.task_uri}")
@@ -130,60 +122,74 @@ class ClassifierAnnotatingTask(CodeListTask):
             else None
         )
 
-        tokenizer = AutoTokenizer.from_pretrained(inference_cfg.huggingface_model_id, token=hf_token)
-        model = AutoModelForSequenceClassification.from_pretrained(
-            inference_cfg.huggingface_model_id, token=hf_token
-        )
-        model.eval()
-
-        problem_type = getattr(model.config, "problem_type", None)
-        if problem_type not in ("single_label_classification", "multi_label_classification"):
-            raise RuntimeError(f"Unexpected problem_type={problem_type!r} on loaded model.")
-
-        id2label: dict[int, str] = model.config.id2label
+        codelist_uri = self.fetch_codelist_uri_for_task()
+        models = fetch_models_for_codelist(codelist_uri)
+        if not models:
+            self.logger.warning(
+                "No models registered with airo:producesOutput for codelist %s; nothing to do.",
+                codelist_uri,
+            )
+            return
 
         codelist = self.fetch_codelist()
         label_to_uri = codelist.build_label_to_uri_map()
 
         decisions = self.fetch_decisions_without_annotations_with_text(target_graph)
-        print(f"{len(decisions)} decisions to classify.", flush=True)
+        print(f"{len(decisions)} decisions to classify with {len(models)} model(s).", flush=True)
 
-        for i, decision in enumerate(decisions):
-            uri, text = decision["uri"], decision["text"]
-            if not text.strip():
-                self.logger.warning("Decision %s has no text; skipping.", uri)
-                continue
+        for m in models:
+            hub_id, model_uri = m["hub_model_id"], m["model_uri"]
+            print(f"Loading model {hub_id} ({model_uri})", flush=True)
 
-            try:
-                predictions = classifier_predict(
-                    text, model, tokenizer, id2label, problem_type, confidence_threshold
+            tokenizer = AutoTokenizer.from_pretrained(hub_id, token=hf_token)
+            hf_model = AutoModelForSequenceClassification.from_pretrained(hub_id, token=hf_token)
+            hf_model.eval()
+
+            problem_type = getattr(hf_model.config, "problem_type", None)
+            if problem_type not in ("single_label_classification", "multi_label_classification"):
+                self.logger.error(
+                    "Skipping %s: unexpected problem_type=%r", hub_id, problem_type
                 )
-            except Exception as exc:
-                self.logger.error("Inference failed for %s: %s", uri, exc, exc_info=True)
                 continue
 
-            if not predictions:
-                continue
+            id2label: dict[int, str] = hf_model.config.id2label
 
-            for label, _conf in predictions:
-                concept_uri = codelist.resolve_label_to_uri(label, label_to_uri)
-                if not concept_uri:
-                    self.logger.warning("No URI for label %r; skipping.", label)
+            for i, decision in enumerate(decisions):
+                uri, text = decision["uri"], decision["text"]
+                if not text.strip():
+                    self.logger.warning("Decision %s has no text; skipping.", uri)
                     continue
-                annotation = LinkingAnnotation(
-                    self.task_uri,
-                    uri,
-                    concept_uri,
-                    self._CLASSIFIER_AGENT_URI,
-                    AGENT_TYPES["ai_component"],
-                )
-                annotation.add_to_triplestore_if_not_exists()
 
-            self.results_container_uris.append(self.create_output_container(uri))
-            print(
-                f"Classified {i+1}/{len(decisions)}: {uri} → {[l for l, _ in predictions]}",
-                flush=True,
-            )
+                try:
+                    predictions = classifier_predict(
+                        text, hf_model, tokenizer, id2label, problem_type, confidence_threshold
+                    )
+                except Exception as exc:
+                    self.logger.error("Inference failed for %s: %s", uri, exc, exc_info=True)
+                    continue
+
+                if not predictions:
+                    continue
+
+                for label, _conf in predictions:
+                    concept_uri = codelist.resolve_label_to_uri(label, label_to_uri)
+                    if not concept_uri:
+                        self.logger.warning("No URI for label %r; skipping.", label)
+                        continue
+                    annotation = LinkingAnnotation(
+                        self.task_uri,
+                        uri,
+                        concept_uri,
+                        model_uri,
+                        AGENT_TYPES["ai_component"],
+                    )
+                    annotation.add_to_triplestore_if_not_exists()
+
+                self.results_container_uris.append(self.create_output_container(uri))
+                print(
+                    f"[{hub_id}] Classified {i+1}/{len(decisions)}: {uri} → {[l for l, _ in predictions]}",
+                    flush=True,
+                )
 
     def create_output_container(self, resource: str) -> str:
         container_id = str(uuid.uuid4())

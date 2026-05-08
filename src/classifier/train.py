@@ -52,6 +52,7 @@ def train(
         decisions: list[dict[str, str | list[str]]],
         labels: list[str],
         model_id: str,
+        codelist_uri: str,
         transformer: str = "distilbert/distilbert-base-uncased",
         learning_rate: float = 2e-5,
         epochs: int = 2,
@@ -150,7 +151,8 @@ def train(
                 hf_repo_url=commit_info.repo_url.url,
                 hf_tree_url=f"{commit_info.repo_url.url}/tree/main/",
                 source_repo_url=repo.remote().url,
-                results=results
+                results=results,
+                codelist_uri=codelist_uri,
             )
             update(query_str, sudo=True)
             print(query_str, flush=True)
