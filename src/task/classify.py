@@ -59,10 +59,12 @@ class ClassifierAnnotatingTask(CodeListTask):
 
     def fetch_decisions_without_annotations_with_text(self, target_graph: str) -> list[dict]:
         concept_scheme_uri = self.fetch_codelist_uri_for_task()
+        expression_filter = self.get_expressions_in_task_filter()
         q = Template(
             get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct", "skos") + """
             SELECT DISTINCT ?s ?title ?description ?decision_basis ?content
             WHERE {
+                $expression_Filter
                 GRAPH $target_graph {
                     ?s rdf:type eli:Expression .
                     OPTIONAL { ?s eli:title ?title }
@@ -89,6 +91,7 @@ class ClassifierAnnotatingTask(CodeListTask):
             ai_graph=sparql_escape_uri(GRAPHS["ai"]),
             public_graph=sparql_escape_uri(GRAPHS["public"]),
             concept_scheme_uri=sparql_escape_uri(concept_scheme_uri),
+            expression_filter=expression_filter
         )
 
         response = query(q, sudo=True)

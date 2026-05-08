@@ -50,6 +50,7 @@ class ClassifierTrainingTask(CodeListTask):
         return decisions
 
     def fetch_decisions_with_classes(self) -> list[dict[str, str | list[str]]]:
+        expression_filter = self.get_expressions_in_task_filter("?decision")
         q = Template(get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct", "skos") + """
         SELECT ?decision ?title ?description ?decision_basis ?content ?classes
         WHERE {
@@ -75,6 +76,7 @@ class ClassifierTrainingTask(CodeListTask):
             GROUP BY ?decision
         }
             GRAPH ?dataGraph {
+                $expression_filter
                 ?decision rdf:type eli:Expression .
                 OPTIONAL { ?decision eli:title ?title }
                 OPTIONAL { ?decision eli:description ?description }
@@ -84,6 +86,7 @@ class ClassifierTrainingTask(CodeListTask):
             }
         }
         """).substitute(
+            expression_filter=expression_filter,
             ai_graph=sparql_escape_uri(GRAPHS['ai']),
             public_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
             concept_scheme_uri=sparql_escape_uri(self.fetch_codelist_uri_for_task()),

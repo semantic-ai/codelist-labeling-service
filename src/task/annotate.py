@@ -23,8 +23,9 @@ class ModelAnnotatingTask(CodeListTask):
 
     __task_type__ = TASK_OPERATIONS["model_annotation"]
 
-    def __init__(self, task_uri: str):
+    def __init__(self, task_uri: str, source: str):
         super().__init__(task_uri)
+        self.source = source
 
         config = get_config()
 
@@ -193,14 +194,17 @@ class ModelBatchAnnotatingTask(CodeListTask):
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
 
-    def process(self):
+    def process(self):        
         codelist_entries = self.fetch_codelist()
         target_graph = self.get_target_graph()
-        decision_uris = self.fetch_decisions_without_annotations(target_graph, codelist_entries.concept_scheme_uri)
+        decision_uris = self.fetch_decisions_without_annotations(
+            target_graph=target_graph, 
+            concept_scheme_uri=codelist_entries.concept_scheme_uri, 
+        )
         print(f"{len(decision_uris)} decisions to process.", flush=True)
 
         for i, decision_uri in enumerate(decision_uris):
-            task = ModelAnnotatingTask(self.task_uri, decision_uri, codelist_entries=codelist_entries)
+            task = ModelAnnotatingTask(self.task_uri, decision_uri)
             task.process()
             self.results_container_uris.extend(task.results_container_uris)
 
@@ -208,12 +212,12 @@ class ModelBatchAnnotatingTask(CodeListTask):
                 f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
     
 
-    @staticmethod
-    def fetch_decisions_without_annotations(target_graph: str, concept_scheme_uri: str) -> list[str]:
-        # TODO: use ext:shapeForTargets (and optionally ext:graphForTargets) from the job to scope which decisions to fetch
+    def fetch_decisions_without_annotations(self, target_graph: str, concept_scheme_uri: str) -> list[str]:
+        expression_filter = self.get_expressions_in_task_filter()
         q = Template(get_prefixes_for_query("rdf", "eli", "oa", "skos", "ext") + """
         SELECT DISTINCT ?s
         WHERE {
+            $expression_filter
             GRAPH $target_graph {
                 ?s rdf:type eli:Expression .
             }
@@ -230,6 +234,7 @@ class ModelBatchAnnotatingTask(CodeListTask):
             }
         }
         """).substitute(
+            expression_filter=expression_filter,
             target_graph=sparql_escape_uri(target_graph), 
             ai_graph=sparql_escape_uri(GRAPHS['ai']),
             concept_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
