@@ -596,6 +596,25 @@ class TestProcess:
         passed_model_id = mock_train.call_args[0][2]
         assert passed_model_id == "test-org/test-model"
 
+    def test_train_receives_codelist_uri_kwarg(
+        self, training_task, mock_codelist, labeled_decisions, mock_config, mocker
+    ):
+        mock_codelist.concept_scheme_uri = CONCEPT_SCHEME_URI
+        mocker.patch.object(training_task, "fetch_codelist", return_value=mock_codelist)
+        mocker.patch.object(
+            training_task, "fetch_decisions_with_classes", return_value=labeled_decisions
+        )
+        mocker.patch.object(
+            ClassifierTrainingTask, "convert_classes_to_original_names",
+            return_value=labeled_decisions,
+        )
+        mocker.patch("src.task.training.get_config", return_value=mock_config)
+        mock_train = mocker.patch("src.task.training.train")
+
+        training_task.process()
+
+        assert mock_train.call_args.kwargs["codelist_uri"] == CONCEPT_SCHEME_URI
+
     def test_fetch_codelist_is_called_once(
         self, training_task, mock_codelist, labeled_decisions, mock_config, mocker
     ):
