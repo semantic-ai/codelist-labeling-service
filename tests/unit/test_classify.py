@@ -79,17 +79,21 @@ def two_registered_models():
     """One AIModel for CONCEPT_SCHEME_URI, one for OTHER_SCHEME_URI."""
     airo = SPARQL_PREFIXES["airo"]
     dcterms = SPARQL_PREFIXES["dcterms"]
+    sd = SPARQL_PREFIXES["sd"]
+    xsd = "http://www.w3.org/2001/XMLSchema#"
     sparql_update(f"""
         INSERT DATA {{
             GRAPH {sparql_escape_uri(GRAPHS["ai"])} {{
                 {sparql_escape_uri(MODEL_URI_1)}
                     a <{airo}AIModel> ;
                     <{airo}producesOutput> {sparql_escape_uri(CONCEPT_SCHEME_URI)} ;
-                    <{dcterms}title> "{HUB_MODEL_ID}" .
+                    <{dcterms}title> "{HUB_MODEL_ID}" ;
+                    <{sd}dataPublished> "2026-05-01T00:00:00+00:00"^^<{xsd}dateTime> .
                 {sparql_escape_uri(MODEL_URI_2)}
                     a <{airo}AIModel> ;
                     <{airo}producesOutput> {sparql_escape_uri(OTHER_SCHEME_URI)} ;
-                    <{dcterms}title> "other-org/n" .
+                    <{dcterms}title> "other-org/n" ;
+                    <{sd}dataPublished> "2026-05-01T00:00:00+00:00"^^<{xsd}dateTime> .
             }}
         }}
     """)
@@ -105,6 +109,31 @@ class TestFetchModelsForCodelist:
 
     def test_returns_empty_when_no_matches(self):
         assert fetch_models_for_codelist(CONCEPT_SCHEME_URI) == []
+
+    def test_returns_only_latest_model_for_codelist(self):
+        airo = SPARQL_PREFIXES["airo"]
+        dcterms = SPARQL_PREFIXES["dcterms"]
+        sd = SPARQL_PREFIXES["sd"]
+        xsd = "http://www.w3.org/2001/XMLSchema#"
+        sparql_update(f"""
+            INSERT DATA {{
+                GRAPH {sparql_escape_uri(GRAPHS["ai"])} {{
+                    <http://test.example.org/models/old>
+                        a <{airo}AIModel> ;
+                        <{airo}producesOutput> {sparql_escape_uri(CONCEPT_SCHEME_URI)} ;
+                        <{dcterms}title> "old" ;
+                        <{sd}dataPublished> "2026-01-01T00:00:00+00:00"^^<{xsd}dateTime> .
+                    <http://test.example.org/models/new>
+                        a <{airo}AIModel> ;
+                        <{airo}producesOutput> {sparql_escape_uri(CONCEPT_SCHEME_URI)} ;
+                        <{dcterms}title> "new" ;
+                        <{sd}dataPublished> "2026-05-08T00:00:00+00:00"^^<{xsd}dateTime> .
+                }}
+            }}
+        """)
+        result = fetch_models_for_codelist(CONCEPT_SCHEME_URI)
+        assert len(result) == 1
+        assert result[0]["hub_model_id"] == "new"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

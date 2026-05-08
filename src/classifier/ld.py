@@ -103,19 +103,22 @@ ${qm_nodes}
 
 
 def fetch_models_for_codelist(codelist_uri: str) -> list[dict]:
-    """Return [{model_uri, hub_model_id}, ...] for all models registered with
-    airo:producesOutput <codelist_uri>."""
+    """Return the most recently published model registered with
+    airo:producesOutput <codelist_uri>, as a 0- or 1-element list."""
     from helpers import query
 
     q = Template(
-        get_prefixes_for_query("airo", "dcterms") + """
+        get_prefixes_for_query("airo", "dcterms", "sd") + """
         SELECT ?model_uri ?hub_model_id WHERE {
             GRAPH ${graph} {
                 ?model_uri a airo:AIModel ;
                            airo:producesOutput ${codelist_uri} ;
-                           dcterms:title ?hub_model_id .
+                           dcterms:title ?hub_model_id ;
+                           sd:dataPublished ?published .
             }
         }
+        ORDER BY DESC(?published)
+        LIMIT 1
         """
     ).substitute(
         graph=sparql_escape_uri(GRAPHS["ai"]),
