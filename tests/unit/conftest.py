@@ -410,7 +410,10 @@ def one_annotated_one_plain_expression():
                 {sparql_escape_uri(ANNOTATION_URI)}
                     a {sparql_escape_uri(NS["oa"] + "Annotation")} ;
                     {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(EXPRESSION_URI_2)} ;
-                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} .
+                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI)} .
+                {sparql_escape_uri(CONCEPT_URI)}
+                    {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
             }}
         }}
     """)
@@ -437,11 +440,17 @@ def two_annotated_expressions():
                 {sparql_escape_uri(ANNOTATION_URI)}
                     a {sparql_escape_uri(NS["oa"] + "Annotation")} ;
                     {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(EXPRESSION_URI)} ;
-                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} .
+                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI)} .
                 <http://test.example.org/annotations/annotation-2>
                     a {sparql_escape_uri(NS["oa"] + "Annotation")} ;
                     {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(EXPRESSION_URI_2)} ;
-                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} .
+                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI_2)} .
+                {sparql_escape_uri(CONCEPT_URI)}
+                    {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
+                {sparql_escape_uri(CONCEPT_URI_2)}
+                    {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
             }}
         }}
     """)
