@@ -7,6 +7,7 @@ numpy
 pytz
 langchain>=0.3
 langchain-ollama
+langchain-openai
 transformers
 datasets
 pydantic>=2.0.0
