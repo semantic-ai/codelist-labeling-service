@@ -3,7 +3,6 @@
     "provider": "ollama",
     "model_name": "mistral-nemo",
     "temperature": 0.1,
-    "api_key": null,
     "base_url": "http://ollama:11434",
     "timeout": 120
   },
@@ -15,7 +14,7 @@
     "huggingface_token": null,
     "huggingface_output_model_id": null
   },
-    "ml_inference": {
+  "ml_inference": {
     "huggingface_model_id": null,
     "huggingface_token": null,
     "confidence_threshold": 0.5

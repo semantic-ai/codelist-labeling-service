@@ -12,6 +12,7 @@ services:
     networks:
       - app-decide_default
     environment:
+      LLM__API_KEY: "SECRET"
       ALLOW_MU_AUTH_SUDO: "true"
       TARGET_GRAPH: http://mu.semte.ch/graphs/harvesting
       JOB_GRAPH: http://mu.semte.ch/graphs/harvesting
