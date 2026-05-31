@@ -1,7 +1,7 @@
 import uuid
 from string import Template
+from decide_ai_service_base.sparql_config import AGENT_TYPES, get_prefixes_for_query, AI_COMPONENTS, TASK_OPERATIONS, GRAPHS
 from helpers import query, update
-from decide_ai_service_base.sparql_config import AGENT_TYPES, TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
 from decide_ai_service_base.annotation import LinkingAnnotation
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from escape_helpers import sparql_escape_uri, sparql_escape_string
@@ -15,10 +15,6 @@ class ClassifierAnnotatingTask(CodeListTask):
     """Runs a trained HuggingFace classifier on unlabeled decisions to produce codelist annotations at scale."""
 
     __task_type__ = TASK_OPERATIONS["codelist_classifier_annotation"]
-
-    # AI_COMPONENTS in decide-ai-service-base has no classifier entry yet;
-    # hardcoded so classifier annotations are distinguishable from LLM annotations in provenance queries.
-    _CLASSIFIER_AGENT_URI = "http://data.lblod.info/id/ai-components/classifier-annotation"
 
     def get_target_graph(self) -> str | None:
         q = Template(
@@ -177,7 +173,7 @@ class ClassifierAnnotatingTask(CodeListTask):
                     self.task_uri,
                     uri,
                     concept_uri,
-                    self._CLASSIFIER_AGENT_URI,
+                    AI_COMPONENTS["classifier_annotater"],
                     AGENT_TYPES["ai_component"],
                 )
                 annotation.add_to_triplestore_if_not_exists()

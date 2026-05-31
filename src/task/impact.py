@@ -2,7 +2,7 @@ from helpers import query, update
 from escape_helpers import sparql_escape_uri, sparql_escape_string
 from string import Template
 
-from decide_ai_service_base.sparql_config import TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
+from decide_ai_service_base.sparql_config import AI_COMPONENTS, AGENT_TYPES, TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
 from .codelist import CodeListTask
 from ..llm_models.llm_model_clients import create_llm_client
 from ..config import get_config
@@ -234,6 +234,7 @@ class ImpactAssessmentTask(CodeListTask):
         return self.llm.invoke(messages)
 
 
+
     def store(self, annotation_uri: str, assessment: ImpactAssessment):
 
         mapping = {
@@ -243,11 +244,12 @@ class ImpactAssessmentTask(CodeListTask):
             ImpactDirection.UNCERTAIN: 'http://mu.semte.ch/vocabularies/ext/impact/unknown'
         }
 
-        query_string = Template(get_prefixes_for_query("oa", "ext", "xsd") +
+        query_string = Template(get_prefixes_for_query("oa", "ext", "xsd", "skos", "prov", "rdf") +
         """
         INSERT {
             GRAPH $graph {
                 $annotation_uri oa:hasBody $assessment .
+                ?activity prov:wasAssociatedWith $agent .
             }
         }
         WHERE {
@@ -255,12 +257,11 @@ class ImpactAssessmentTask(CodeListTask):
                 $annotation_uri a oa:Annotation .
                 FILTER NOT EXISTS { 
                     $annotation_uri oa:hasBody ?anyImpact .
-                    FILTER(?anyImpact IN (
-                        <http://mu.semte.ch/vocabularies/ext/impact/positive>,
-                        <http://mu.semte.ch/vocabularies/ext/impact/negative>,
-                        <http://mu.semte.ch/vocabularies/ext/impact/neutral>,
-                        <http://mu.semte.ch/vocabularies/ext/impact/unknown>
-                    ))
+                    ?anyImpact skos:inScheme $impact_scheme . 
+                }
+                OPTIONAL {
+                    ?activity a prov:Activity ;
+                        prov:generated $annotation_uri .
                 }
             }
         }
@@ -269,7 +270,9 @@ class ImpactAssessmentTask(CodeListTask):
             graph=sparql_escape_uri(GRAPHS['ai']),
             annotation_uri=sparql_escape_uri(annotation_uri),
             assessment=sparql_escape_uri(mapping[assessment.impact_direction]),
-        )
+            impact_scheme=sparql_escape_uri("http://mu.semte.ch/vocabularies/ext/impact"),
+            agent=sparql_escape_uri(AI_COMPONENTS["impact_annotator"])        
+            )
 
 
         try:
