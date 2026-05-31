@@ -27,6 +27,7 @@ class ModelAnnotatingTask(CodeListTask):
                  codelist_entries: 'Codelist | None' = None,
                  property_path_for_text: str | None = None):
         super().__init__(task_uri)
+        self.source = source
 
         if source is not None:
             self.source = source
@@ -227,7 +228,7 @@ class ModelBatchAnnotatingTask(CodeListTask):
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
 
-    def process(self):
+    def process(self):        
         codelist_entries = self.fetch_codelist()
         target_graph = self.get_target_graph()
         target_nodes, target_classes = self.fetch_shape_targets()
@@ -254,8 +255,8 @@ class ModelBatchAnnotatingTask(CodeListTask):
             print(
                 f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
 
-    @staticmethod
     def fetch_decisions_without_annotations(
+        self,
         concept_scheme_uri: str,
         target_graph: str | None = None,
         target_nodes: list[str] | None = None,
@@ -300,23 +301,32 @@ class ModelBatchAnnotatingTask(CodeListTask):
         else:
             filter_graph_values = f"VALUES ?g {{ {sparql_escape_uri(GRAPHS['ai'])} }}"
 
-        q = get_prefixes_for_query("rdf", "eli", "oa", "skos", "ext") + f"""
+        expression_filter = self.get_expressions_in_task_filter()
+        q = Template(get_prefixes_for_query("rdf", "eli", "oa", "skos", "ext") + """
         SELECT DISTINCT ?s
-        WHERE {{
-            {target_clause}
-            FILTER NOT EXISTS {{
-                {filter_graph_values}
-                GRAPH ?g {{
+        WHERE {
+            $expression_filter
+            $target_clause
+            FILTER NOT EXISTS {
+                $filter_graph_values
+                GRAPH ?g {
                     ?ann a oa:Annotation ;
                          oa:hasTarget ?s ;
                          oa:motivatedBy oa:classifying ;
                          oa:hasBody ?concept .
-
-                    ?concept skos:inScheme|ext:forConceptScheme {sparql_escape_uri(concept_scheme_uri)} .
-                }}
-            }}
-        }}
-        """
+                    ?concept skos:inScheme|ext:forConceptScheme $concept_scheme_uri .
+                }
+            }
+        }
+        """).substitute(
+            expression_filter=expression_filter,
+            target_graph=sparql_escape_uri(target_graph), 
+            ai_graph=sparql_escape_uri(GRAPHS['ai']),
+            concept_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
+            concept_scheme_uri=sparql_escape_uri(concept_scheme_uri),
+            target_clause=target_clause,
+            filter_graph_values=filter_graph_values
+        )
 
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
