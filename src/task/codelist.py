@@ -43,6 +43,9 @@ class Codelist(list[CodelistEntry]):
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
 
+        if not bindings:
+            raise RuntimeError(f"No concepts found for concept scheme {concept_scheme_uri}")
+
         entries = [
             CodelistEntry(
                 uri=b["concept"]["value"],
@@ -141,6 +144,53 @@ class CodeListTask(DecisionTask, ABC):
     def fetch_codelist(self) -> Codelist:
         codelist_uri = self.fetch_codelist_uri_for_task()
         return Codelist.from_uri(codelist_uri)
+
+    def get_expressions_in_task_filter(self, varname = "?s") -> list[str]:
+        q = Template(
+            """
+            PREFIX dct: <http://purl.org/dc/terms/>
+            PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+            PREFIX eli: <http://data.europa.eu/eli/ontology#>
+            SELECT DISTINCT ?expression WHERE {
+                $task <http://redpencil.data.gift/vocabularies/tasks/inputContainer> ?input.
+                ?input <http://redpencil.data.gift/vocabularies/tasks/hasResource> ?expression.
+            }
+            """
+        ).substitute(
+            task=sparql_escape_uri(self.task_uri)
+        )
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+        if not bindings:
+            # this means do all expressions, so no filter
+            return "";
+        expression_values = "\n".join([sparql_escape_uri(binding["expression"]["value"]) for binding in bindings])
+        values = f"VALUES {varname} {{ {expression_values} }}"
+
+        q = Template(
+            """
+            PREFIX dct: <http://purl.org/dc/terms/>
+            PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+            PREFIX eli: <http://data.europa.eu/eli/ontology#>
+            SELECT DISTINCT $varname WHERE {
+                $values
+                ?input <http://redpencil.data.gift/vocabularies/tasks/hasResource> ?expression.
+                FILTER NOT EXISTS {
+                    $varname a eli:Expression .
+                }   
+            }
+            """
+        ).substitute(
+            values=values,
+            varname=varname
+        )
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+        if bindings:
+            non_expression_uris = ", ".join([b[varname.replace("?","")]["value"] for b in bindings])
+            raise RuntimeError(f"The following uris were not found to be expressions: {non_expression_uris}")
+        
+        return values
     
     def get_target_graph(self) -> str:
         q = Template(

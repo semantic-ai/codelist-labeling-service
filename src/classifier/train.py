@@ -17,7 +17,7 @@ def _build_model_card(
     results: dict,
     code_git_sha: str,
 ) -> ModelCard:
-    label_list = ", ".join(f"`{l}`" for l in sorted(labels))
+    label_list = "\n".join(f"- `{l}`" for l in sorted(labels))
     metrics_line = " | ".join(
         f"{k.replace('eval_', '').capitalize()}: {v:.4f}"
         for k, v in results.items()
@@ -96,7 +96,6 @@ def train(
         save_strategy="epoch",
         load_best_model_at_end=True,
         push_to_hub=False,  # we'll push manually at the end to grab the commitinfo
-        push_to_hub_model_id=model_id
     )
 
     # Create model
@@ -130,23 +129,28 @@ def train(
         print(f"Push to hub skipped/failed: {exc}", flush=True)
     results = trainer.evaluate()
 
-    repo = git.Repo(search_parent_directories=True)
+    try:
+        repo = git.Repo(search_parent_directories=True)
+    except Exception as exc:
+        print(f"Git repo not found, skipping metadata registration: {exc}", flush=True)
+        repo = None
 
     if commit_info:
-        # Build SPARQL INSERT query
-        query_str = build_airo_model_insert_query(
-            hub_model_id=model_id,
-            commit_oid=commit_info.oid,
-            code_git_sha=repo.head.object.hexsha,
-            hf_repo_url=commit_info.repo_url.url,
-            hf_tree_url=f"{commit_info.repo_url.url}/tree/main/",
-            source_repo_url=repo.remote().url,
-            results=results
+        card = _build_model_card(
+            model_id, transformer, labels, results,
+            repo.head.object.hexsha if repo else "unknown"
         )
-
-        update(query_str, sudo=True)
-
-        print(query_str, flush=True)
-
-        card = _build_model_card(model_id, transformer, labels, results, repo.head.object.hexsha)
         card.push_to_hub(model_id)
+
+        if repo:
+            query_str = build_airo_model_insert_query(
+                hub_model_id=model_id,
+                commit_oid=commit_info.oid,
+                code_git_sha=repo.head.object.hexsha,
+                hf_repo_url=commit_info.repo_url.url,
+                hf_tree_url=f"{commit_info.repo_url.url}/tree/main/",
+                source_repo_url=repo.remote().url,
+                results=results
+            )
+            update(query_str, sudo=True)
+            print(query_str, flush=True)
