@@ -1,3 +1,4 @@
+import re
 from abc import ABC
 from string import Template
 from decide_ai_service_base.task import DecisionTask
@@ -192,7 +193,7 @@ class CodeListTask(DecisionTask, ABC):
         
         return values
     
-    def get_target_graph(self) -> str:
+    def get_target_graph(self) -> str | None:
         q = Template(
             """
             PREFIX dct: <http://purl.org/dc/terms/>
@@ -206,5 +207,83 @@ class CodeListTask(DecisionTask, ABC):
         res = query(q, sudo=True)
         bindings = res.get("results", {}).get("bindings", [])
         if not bindings:
-            raise RuntimeError(f"No ext:graphForTargets found for task {self.task_uri}")
+            return None
         return bindings[0]["graph"]["value"]
+
+    def fetch_shape_targets(self) -> tuple[list[str], list[str]]:
+        """Fetch ext:shapeForTargets from the job and resolve sh:targetNode / sh:targetClass.
+
+        Returns:
+            Tuple of (target_nodes, target_classes) — lists of URIs.
+            Both lists are empty when no shapes are configured on the job.
+        """
+        q = Template(
+            """
+            PREFIX dct: <http://purl.org/dc/terms/>
+            PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+            PREFIX sh: <http://www.w3.org/ns/shacl#>
+
+            SELECT ?targetNode ?targetClass WHERE {
+                $task dct:isPartOf ?job .
+                ?job ext:shapeForTargets ?shape .
+                OPTIONAL { ?shape sh:targetNode ?targetNode . }
+                OPTIONAL { ?shape sh:targetClass ?targetClass . }
+            }
+            """
+        ).substitute(task=sparql_escape_uri(self.task_uri))
+
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+
+        target_nodes: set[str] = set()
+        target_classes: set[str] = set()
+
+        for b in bindings:
+            if "targetNode" in b:
+                target_nodes.add(b["targetNode"]["value"])
+            if "targetClass" in b:
+                target_classes.add(b["targetClass"]["value"])
+
+        return list(target_nodes), list(target_classes)
+
+    def fetch_property_path_for_text(self) -> str | None:
+        """Fetch ext:propertyPathForText from the job.
+
+        Returns the property URI string, or None if not configured.
+        Validates the SPARQL result to prevent injection:
+          - Must be a URI type (not a literal)
+          - Must start with http:// or https://
+        """
+        q = Template(
+            """
+            PREFIX dct: <http://purl.org/dc/terms/>
+            PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+
+            SELECT ?propertyPath WHERE {
+                $task dct:isPartOf ?job .
+                ?job ext:propertyPathForText ?propertyPath .
+            }
+            """
+        ).substitute(task=sparql_escape_uri(self.task_uri))
+
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+        if not bindings:
+            return None
+
+        result = bindings[0]["propertyPath"]
+
+        if result.get("type") != "uri":
+            raise ValueError(
+                f"ext:propertyPathForText must be a URI, got type "
+                f"'{result.get('type')}': {result.get('value')}"
+            )
+
+        uri = result["value"]
+        if not re.match(r'^https?://', uri):
+            raise ValueError(
+                f"ext:propertyPathForText URI must start with http:// or https://, "
+                f"got: {uri}"
+            )
+
+        return uri

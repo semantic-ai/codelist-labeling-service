@@ -23,14 +23,20 @@ class ModelAnnotatingTask(CodeListTask):
 
     __task_type__ = TASK_OPERATIONS["model_annotation"]
 
-    def __init__(self, task_uri: str, source: str):
+    def __init__(self, task_uri: str, source: str = None,
+                 codelist_entries: 'Codelist | None' = None,
+                 property_path_for_text: str | None = None):
         super().__init__(task_uri)
         self.source = source
 
+        if source is not None:
+            self.source = source
+
         config = get_config()
 
-        self._codelist_entries = self.fetch_codelist()
+        self._codelist_entries = codelist_entries if codelist_entries is not None else self.fetch_codelist()
         self._label_to_uri = self._codelist_entries.build_label_to_uri_map()
+        self._property_path_for_text = property_path_for_text
 
         # LLM setup
         self._llm = create_llm_client(config.llm)
@@ -40,9 +46,37 @@ class ModelAnnotatingTask(CodeListTask):
         self._llm_system_message = prompt.system_message
         self._llm_user_message = prompt.user_message
 
+    def fetch_text_with_property_path(self, property_uri: str) -> str:
+        """Fetch text from the task source using the specified property URI.
+
+        Uses sparql_escape_uri() to safely interpolate the property URI,
+        preventing SPARQL injection.
+        """
+        q = Template(
+            get_prefixes_for_query("eli") +
+            """
+            SELECT ?text WHERE {
+                GRAPH ?graph {
+                    VALUES ?s { $source }
+                    ?s $property ?text .
+                }
+            }
+            """
+        ).substitute(
+            source=sparql_escape_uri(self.source),
+            property=sparql_escape_uri(property_uri)
+        )
+
+        response = query(q, sudo=True)
+        bindings = response.get("results", {}).get("bindings", [])
+        texts = [b["text"]["value"] for b in bindings if "text" in b]
+        return "\n".join(texts)
+
     def process(self):
-        # TODO: read ext:propertyPathForText from the job and pass it to fetch_data() instead of hardcoding epvoc:expressionContent
-        task_data = self.fetch_data()
+        if self._property_path_for_text:
+            task_data = self.fetch_text_with_property_path(self._property_path_for_text)
+        else:
+            task_data = self.fetch_data()
         self.logger.info(task_data)
 
         if not task_data.strip():
@@ -197,38 +231,89 @@ class ModelBatchAnnotatingTask(CodeListTask):
     def process(self):        
         codelist_entries = self.fetch_codelist()
         target_graph = self.get_target_graph()
+        target_nodes, target_classes = self.fetch_shape_targets()
+        property_path_for_text = self.fetch_property_path_for_text()
+
         decision_uris = self.fetch_decisions_without_annotations(
-            target_graph=target_graph, 
-            concept_scheme_uri=codelist_entries.concept_scheme_uri, 
+            concept_scheme_uri=codelist_entries.concept_scheme_uri,
+            target_graph=target_graph,
+            target_nodes=target_nodes,
+            target_classes=target_classes,
         )
         print(f"{len(decision_uris)} decisions to process.", flush=True)
 
         for i, decision_uri in enumerate(decision_uris):
-            task = ModelAnnotatingTask(self.task_uri, decision_uri)
+            task = ModelAnnotatingTask(
+                self.task_uri,
+                source=decision_uri,
+                codelist_entries=codelist_entries,
+                property_path_for_text=property_path_for_text,
+            )
             task.process()
             self.results_container_uris.extend(task.results_container_uris)
 
             print(
                 f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
-    
 
-    def fetch_decisions_without_annotations(self, target_graph: str, concept_scheme_uri: str) -> list[str]:
+    def fetch_decisions_without_annotations(
+        self,
+        concept_scheme_uri: str,
+        target_graph: str | None = None,
+        target_nodes: list[str] | None = None,
+        target_classes: list[str] | None = None,
+    ) -> list[str]:
+        """Fetch decision URIs that have no classifying annotation for the given concept scheme.
+
+        Uses ext:shapeForTargets to determine which decisions to consider:
+          - target_nodes (from sh:targetNode): specific decision URIs
+          - target_classes (from sh:targetClass): all instances of the given classes
+          - Neither: defaults to eli:Expression
+
+        target_graph is optional; when not set, searches across all graphs.
+        """
+        # Build the target pattern based on SHACL shape configuration
+        if target_nodes and target_classes:
+            node_values = " ".join(sparql_escape_uri(n) for n in target_nodes)
+            class_values = " ".join(sparql_escape_uri(c) for c in target_classes)
+            target_pattern = (
+                f"{{ VALUES ?s {{ {node_values} }} }}\n"
+                f"UNION\n"
+                f"{{ ?s rdf:type ?targetClass . VALUES ?targetClass {{ {class_values} }} }}"
+            )
+        elif target_nodes:
+            node_values = " ".join(sparql_escape_uri(n) for n in target_nodes)
+            target_pattern = f"VALUES ?s {{ {node_values} }}"
+        elif target_classes:
+            class_values = " ".join(sparql_escape_uri(c) for c in target_classes)
+            target_pattern = f"?s rdf:type ?targetClass . VALUES ?targetClass {{ {class_values} }}"
+        else:
+            target_pattern = "?s rdf:type eli:Expression ."
+
+        # Build the graph wrapper — optional when target_graph is not set
+        if target_graph:
+            target_clause = f"GRAPH {sparql_escape_uri(target_graph)} {{ {target_pattern} }}"
+        else:
+            target_clause = target_pattern
+
+        # Build the FILTER NOT EXISTS graphs to check
+        if target_graph:
+            filter_graph_values = f"VALUES ?g {{ {sparql_escape_uri(target_graph)} {sparql_escape_uri(GRAPHS['ai'])} }}"
+        else:
+            filter_graph_values = f"VALUES ?g {{ {sparql_escape_uri(GRAPHS['ai'])} }}"
+
         expression_filter = self.get_expressions_in_task_filter()
         q = Template(get_prefixes_for_query("rdf", "eli", "oa", "skos", "ext") + """
         SELECT DISTINCT ?s
         WHERE {
             $expression_filter
-            GRAPH $target_graph {
-                ?s rdf:type eli:Expression .
-            }
+            $target_clause
             FILTER NOT EXISTS {
-                VALUES ?g { $target_graph $ai_graph }
+                $filter_graph_values
                 GRAPH ?g {
                     ?ann a oa:Annotation ;
                          oa:hasTarget ?s ;
                          oa:motivatedBy oa:classifying ;
                          oa:hasBody ?concept .
-                    
                     ?concept skos:inScheme|ext:forConceptScheme $concept_scheme_uri .
                 }
             }
@@ -238,7 +323,9 @@ class ModelBatchAnnotatingTask(CodeListTask):
             target_graph=sparql_escape_uri(target_graph), 
             ai_graph=sparql_escape_uri(GRAPHS['ai']),
             concept_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
-            concept_scheme_uri=sparql_escape_uri(concept_scheme_uri)
+            concept_scheme_uri=sparql_escape_uri(concept_scheme_uri),
+            target_clause=target_clause,
+            filter_graph_values=filter_graph_values
         )
 
         response = query(q, sudo=True)
