@@ -1,5 +1,6 @@
 import logging
 import os
+from threading import Lock
 
 from helpers import query, log
 from escape_helpers import sparql_escape_uri
@@ -7,7 +8,7 @@ from escape_helpers import sparql_escape_uri
 from fastapi import APIRouter, BackgroundTasks
 
 from decide_ai_service_base.task import Task
-from decide_ai_service_base.util import wait_for_triplestore, process_open_tasks, fail_busy_and_scheduled_tasks
+from decide_ai_service_base.util import wait_for_triplestore, TaskProcessor, process_open_tasks, fail_busy_and_scheduled_tasks
 from decide_ai_service_base.schema import NotificationResponse, TaskOperationsResponse
 from src.task import ModelAnnotatingTask, ModelBatchAnnotatingTask, ClassifierTrainingTask, ImpactAssessmentTask, ClassifierAnnotatingTask
 
@@ -18,11 +19,13 @@ from src.task import ModelAnnotatingTask, ModelBatchAnnotatingTask, ClassifierTr
 _log_level = os.environ.get("LOG_LEVEL", "WARNING").upper()
 logging.basicConfig(level=getattr(logging, _log_level, logging.WARNING))
 
+_open_tasks_lock = Lock()
+
 @app.on_event("startup")
 async def startup_event():
     wait_for_triplestore()
     fail_busy_and_scheduled_tasks()
-    process_open_tasks()
+    process_open_tasks(_open_tasks_lock)
 
 
 router = APIRouter()
@@ -30,7 +33,8 @@ router = APIRouter()
 
 @router.post("/delta", status_code=202)
 async def delta(background_tasks: BackgroundTasks) -> NotificationResponse:
-    background_tasks.add_task(process_open_tasks)
+    processor = TaskProcessor(_open_tasks_lock)
+    background_tasks.add_task(processor)
     return NotificationResponse(status="accepted", message="Processing started")
 
 
