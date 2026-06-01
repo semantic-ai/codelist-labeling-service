@@ -1,4 +1,5 @@
 import logging
+import os
 import random
 import time
 import uuid
@@ -111,8 +112,10 @@ class ModelAnnotatingTask(CodeListTask):
         else:
             self.store_no_match()
 
-        
-    
+        rate_limit_delay = float(os.environ.get("RATE_LIMIT_DELAY_SECONDS", "0"))
+        if rate_limit_delay > 0:
+            time.sleep(rate_limit_delay)
+
     def store_no_match(self):
         id = uuid.uuid4()
         uri = f"http://mu.semte.ch/vocabularies/ext/no-match-found/id/{id}"
