@@ -148,29 +148,9 @@ class ModelAnnotatingTask(CodeListTask):
         
     
     def store_no_match(self):
-        id = uuid.uuid4()
-        uri = f"http://mu.semte.ch/vocabularies/ext/no-match-found/id/{id}"
-        query_string = Template(get_prefixes_for_query("ext", "mu") +
-        
-        """
-        INSERT DATA {
-            GRAPH $graph {
-                $uri a ext:NoMatchFound ;
-                     mu:uuid $id ;
-                     ext:forConceptScheme $concept_scheme .
-            }
-        }
-        """
-        ).substitute(
-            graph=sparql_escape_uri(GRAPHS['ai']),
-            uri=sparql_escape_uri(uri),
-            id=sparql_escape_string(id),
-            concept_scheme=sparql_escape_uri(self._codelist_entries.concept_scheme_uri)
-        )
+        uri = f"http://mu.semte.ch/vocabularies/ext/no-match-found"
 
         try:
-            update(query_string, sudo=True)
-
             annotation = LinkingAnnotation(
                 self.task_uri,
                 self.source,
