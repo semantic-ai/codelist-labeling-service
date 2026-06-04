@@ -1,4 +1,5 @@
 import logging
+import os
 import random
 import time
 import uuid
@@ -27,6 +28,7 @@ class ModelAnnotatingTask(CodeListTask):
                  codelist_entries: 'Codelist | None' = None,
                  property_path_for_text: str | None = None):
         super().__init__(task_uri)
+        self.logger = logging.getLogger(__name__)
         self.source = source
 
         if source is not None:
@@ -64,7 +66,7 @@ class ModelAnnotatingTask(CodeListTask):
             """
         ).substitute(
             source=sparql_escape_uri(self.source),
-            property=sparql_escape_uri(property_uri)
+            property=property_uri
         )
 
         response = query(q, sudo=True)
@@ -77,7 +79,6 @@ class ModelAnnotatingTask(CodeListTask):
             task_data = self.fetch_text_with_property_path(self._property_path_for_text)
         else:
             task_data = self.fetch_data()
-        self.logger.info(task_data)
 
         if not task_data.strip():
             self.logger.warning(
@@ -145,7 +146,11 @@ class ModelAnnotatingTask(CodeListTask):
         else:
             self.store_no_match()
 
-        
+        rate_limit_delay = float(os.environ.get("RATE_LIMIT_DELAY_SECONDS", "0"))
+        self.logger.warning(f"[RATE-LIMIT] Waiting for {rate_limit_delay} seconds to respect rate limits.")
+        print(f"Waiting for {rate_limit_delay} seconds to respect rate limits.", flush=True)
+        if rate_limit_delay > 0:
+            time.sleep(rate_limit_delay)
     
     def store_no_match(self):
         uri = f"http://mu.semte.ch/vocabularies/ext/no-match-found"
