@@ -6,6 +6,7 @@ from decide_ai_service_base.sparql_config import AI_COMPONENTS, AGENT_TYPES, TAS
 from .codelist import CodeListTask
 from ..llm_models.llm_model_clients import create_llm_client
 from ..config import get_config
+from ..retry import retry_call
 from langchain_core.messages import HumanMessage, SystemMessage
 
 
@@ -60,6 +61,8 @@ class ImpactAssessmentTask(CodeListTask):
         config = get_config()
         self.llm = create_llm_client(config.llm)._chat_model.with_structured_output(ImpactAssessment)
         self.provider = config.llm.provider
+        self.max_retries = config.llm.max_retries
+        self.retry_delay = config.llm.retry_delay
 
     def fetch_eli_expressions(self, target_graph: str) -> list[ProcessItem]:
         """
@@ -231,7 +234,7 @@ class ImpactAssessmentTask(CodeListTask):
                 content=f"Policy text: {process_item.expression_content}\nLabel: {policy_label.policy_label}\n\nProvide a structured impact assessment."),
         ]
 
-        return self.llm.invoke(messages)
+        return retry_call(self.llm.invoke, messages, max_retries=self.max_retries, retry_delay=self.retry_delay)
 
 
 

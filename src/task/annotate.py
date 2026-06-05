@@ -16,6 +16,7 @@ from ..llm_models.llm_model_clients import create_llm_client
 from ..llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
 from .codelist import Codelist, CodelistEntry, CodeListTask
 from ..config import get_config
+from ..retry import retry_call
 
 
 class ModelAnnotatingTask(CodeListTask):
@@ -41,6 +42,8 @@ class ModelAnnotatingTask(CodeListTask):
         # LLM setup
         self._llm = create_llm_client(config.llm)
         self._provider = config.llm.provider
+        self._max_retries = config.llm.max_retries
+        self._retry_delay = config.llm.retry_delay
 
         prompt = config.get_codelist_prompt(self._codelist_entries.concept_scheme_uri)
         self._llm_system_message = prompt.system_message
@@ -99,28 +102,18 @@ class ModelAnnotatingTask(CodeListTask):
             self.logger.error("No LLM client available; skipping model annotation.")
             return
         else:
-            max_retries = 3
             llm_input = LlmTaskInput(system_message=self._llm_system_message,
                                      user_message=self._llm_user_message.format(
                                          code_list=labels_for_prompt, decision_text=task_data),
                                      assistant_message=None,
                                      output_format=EntityLinkingTaskOutput)
 
-
-            for attempt in range(1, max_retries + 1):
-                try:
-                    response = self._llm(llm_input)
-                    classes = response.designated_classes
-                    
-                    break
-                except Exception as exc:
-                    if attempt == max_retries:
-                        self.logger.warning(
-                            f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
-                    else:
-                        self.logger.warning(
-                            f"LLM call attempt {attempt}/{max_retries} failed ({exc}); retrying.")
-                        time.sleep(attempt)
+            try:
+                response = retry_call(self._llm, llm_input, max_retries=self._max_retries, retry_delay=self._retry_delay)
+                classes = response.designated_classes
+            except Exception as exc:
+                self.logger.warning(
+                    f"LLM call failed after {self._max_retries} attempts ({exc}); skipping annotation.")
 
         self.logger.warning(f"LLM returned classes: {classes}")
 

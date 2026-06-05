@@ -53,6 +53,16 @@ class LlmConfig(BaseModel):
         ge=1,
         description="Request timeout in seconds"
     )
+    max_retries: int = Field(
+        default=3,
+        ge=1,
+        description="Max attempts on LLM call failure"
+    )
+    retry_delay: float = Field(
+        default=15.0,
+        ge=0,
+        description="Seconds to sleep between retries"
+    )
 
 
 class MLTrainingConfig(BaseModel):
