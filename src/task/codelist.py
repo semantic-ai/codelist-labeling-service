@@ -2,13 +2,10 @@ import re
 from abc import ABC
 from string import Template
 from decide_ai_service_base.task import DecisionTask
-import logging
 from pydantic import BaseModel, Field
-from helpers import query
+from helpers import query, logger
 from escape_helpers import sparql_escape_uri
 
-
-logger = logging.getLogger(__name__)
 
 
 class CodelistEntry(BaseModel):
@@ -140,8 +137,6 @@ class CodeListTask(DecisionTask, ABC):
         
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
-        
-        self.logger = logging.getLogger(__name__)
 
         if not bindings:
             raise ValueError(

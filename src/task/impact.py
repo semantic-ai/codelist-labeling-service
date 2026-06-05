@@ -1,4 +1,4 @@
-from helpers import query, update
+from helpers import query, update, logger
 from escape_helpers import sparql_escape_uri, sparql_escape_string
 from string import Template
 
@@ -135,7 +135,7 @@ class ImpactAssessmentTask(CodeListTask):
 
         bindings = query(q, sudo=True).get("results", {}).get("bindings", [])
         if not bindings:
-            self.logger.warning(
+            logger.warning(
                 f"No expressions found in input container for task {self.task_uri}")
             return []
 
@@ -187,7 +187,7 @@ class ImpactAssessmentTask(CodeListTask):
         )
         bindings = query(q, sudo=True).get("results", {}).get("bindings", [])
         if not bindings:
-            self.logger.warning(
+            logger.warning(
                 f"No policy labels (excluding no-match-found) found for expression {expression_uri}")
             return []
 
@@ -279,7 +279,7 @@ class ImpactAssessmentTask(CodeListTask):
             update(query_string, sudo=True)
         except Exception as e:
             error_msg = f"Failed to insert impact assesment to triplestore for annotation {annotation_uri}: {e}"
-            self.logger.error(error_msg, exc_info=True)
+            logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
 
 

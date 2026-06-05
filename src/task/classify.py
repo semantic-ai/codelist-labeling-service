@@ -1,7 +1,7 @@
 import uuid
 from string import Template
 from decide_ai_service_base.sparql_config import AGENT_TYPES, get_prefixes_for_query, AI_COMPONENTS, TASK_OPERATIONS, GRAPHS
-from helpers import query, update
+from helpers import query, update, logger
 from decide_ai_service_base.annotation import LinkingAnnotation
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from escape_helpers import sparql_escape_uri, sparql_escape_string
@@ -150,7 +150,7 @@ class ClassifierAnnotatingTask(CodeListTask):
         for i, decision in enumerate(decisions):
             uri, text = decision["uri"], decision["text"]
             if not text.strip():
-                self.logger.warning("Decision %s has no text; skipping.", uri)
+                logger.warning("Decision %s has no text; skipping.", uri)
                 continue
 
             try:
@@ -158,7 +158,7 @@ class ClassifierAnnotatingTask(CodeListTask):
                     text, model, tokenizer, id2label, problem_type, confidence_threshold
                 )
             except Exception as exc:
-                self.logger.error("Inference failed for %s: %s", uri, exc, exc_info=True)
+                logger.error("Inference failed for %s: %s", uri, exc, exc_info=True)
                 continue
 
             if not predictions:
@@ -167,7 +167,7 @@ class ClassifierAnnotatingTask(CodeListTask):
             for label, _conf in predictions:
                 concept_uri = codelist.resolve_label_to_uri(label, label_to_uri)
                 if not concept_uri:
-                    self.logger.warning("No URI for label %r; skipping.", label)
+                    logger.warning("No URI for label %r; skipping.", label)
                     continue
                 annotation = LinkingAnnotation(
                     self.task_uri,
