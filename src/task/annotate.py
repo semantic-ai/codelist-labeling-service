@@ -1,9 +1,10 @@
 import logging
+import os
 import random
 import time
 import uuid
 from string import Template
-from helpers import query, update
+from helpers import query, update, logger
 from escape_helpers import sparql_escape_uri, sparql_escape_string
 import uuid 
 
@@ -64,7 +65,7 @@ class ModelAnnotatingTask(CodeListTask):
             """
         ).substitute(
             source=sparql_escape_uri(self.source),
-            property=sparql_escape_uri(property_uri)
+            property=property_uri
         )
 
         response = query(q, sudo=True)
@@ -77,26 +78,24 @@ class ModelAnnotatingTask(CodeListTask):
             task_data = self.fetch_text_with_property_path(self._property_path_for_text)
         else:
             task_data = self.fetch_data()
-        self.logger.info(task_data)
 
         if not task_data.strip():
-            self.logger.warning(
-                "No task data found; skipping model annotation.")
+            logger.warning("No task data found; skipping model annotation.")
             return
 
         labels = self._codelist_entries.get_labels()
         if not labels:
-            self.logger.error("No concepts found in codelist; skipping model annotation.")
+            logger.error("No concepts found in codelist; skipping model annotation.")
             return
 
         labels_for_prompt = self._codelist_entries.get_labels_with_definitions()
 
         classes: list[str] = []
         if self._provider == "random":
-            self.logger.warning("Using random label (provider=random).")
+            logger.warning("Using random label (provider=random).")
             classes = [random.choice(labels)]
         elif self._llm is None:
-            self.logger.error("No LLM client available; skipping model annotation.")
+            logger.error("No LLM client available; skipping model annotation.")
             return
         else:
             max_retries = 3
@@ -115,19 +114,17 @@ class ModelAnnotatingTask(CodeListTask):
                     break
                 except Exception as exc:
                     if attempt == max_retries:
-                        self.logger.warning(
-                            f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
+                        logger.warning(f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
                     else:
-                        self.logger.warning(
-                            f"LLM call attempt {attempt}/{max_retries} failed ({exc}); retrying.")
+                        logger.warning(f"LLM call attempt {attempt}/{max_retries} failed ({exc}); retrying.")
                         time.sleep(attempt)
 
-        self.logger.warning(f"LLM returned classes: {classes}")
+        logger.warning(f"LLM returned classes: {classes}")
 
         for c in classes:
             concept_uri = self._codelist_entries.resolve_label_to_uri(c, self._label_to_uri)
             if not concept_uri:
-                self.logger.warning(f"No URI found for class '{c}', skipping annotation.")
+                logger.warning(f"No URI found for class '{c}', skipping annotation.")
                 continue
 
             annotation = LinkingAnnotation(
@@ -138,14 +135,18 @@ class ModelAnnotatingTask(CodeListTask):
                 AGENT_TYPES["ai_component"]
             )
             annotation.add_to_triplestore_if_not_exists()
-            self.logger.warning("Created SDG annotation")
+            logger.warning("Created SDG annotation")
 
         if classes:
             self.results_container_uris.append(self.create_output_container(self.source))
         else:
             self.store_no_match()
 
-        
+        rate_limit_delay = float(os.environ.get("RATE_LIMIT_DELAY_SECONDS", "0"))
+        logger.warning(f"[RATE-LIMIT] Waiting for {rate_limit_delay} seconds to respect rate limits.")
+        print(f"Waiting for {rate_limit_delay} seconds to respect rate limits.", flush=True)
+        if rate_limit_delay > 0:
+            time.sleep(rate_limit_delay)
     
     def store_no_match(self):
         uri = f"http://mu.semte.ch/vocabularies/ext/no-match-found"
@@ -162,7 +163,7 @@ class ModelAnnotatingTask(CodeListTask):
             self.results_container_uris.append(self.create_output_container(self.source))
         except Exception as e:
             error_msg = f"Failed to insert no-match-found: {e}"
-            self.logger.error(error_msg, exc_info=True)
+            logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
             
 

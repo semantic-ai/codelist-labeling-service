@@ -2,13 +2,10 @@ import re
 from abc import ABC
 from string import Template
 from decide_ai_service_base.task import DecisionTask
-import logging
 from pydantic import BaseModel, Field
-from helpers import query
+from helpers import query, logger
 from escape_helpers import sparql_escape_uri
 
-
-logger = logging.getLogger(__name__)
 
 
 class CodelistEntry(BaseModel):
@@ -128,13 +125,19 @@ class CodeListTask(DecisionTask, ABC):
 
             SELECT ?codelist
             WHERE {
-                $task dct:isPartOf ?job .
-                ?job ext:codelist ?codelist .
+                GRAPH ?graph {
+                    $task dct:isPartOf ?job .
+                    ?job ext:codelist ?codelist .
+                }
             }
             """
-        ).substitute(task=sparql_escape_uri(self.task_uri))
+        ).substitute(
+            task=sparql_escape_uri(self.task_uri)
+        )
+        
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
+
         if not bindings:
             raise ValueError(
                 f"No codelist URI found for task {self.task_uri}. "
@@ -272,18 +275,6 @@ class CodeListTask(DecisionTask, ABC):
             return None
 
         result = bindings[0]["propertyPath"]
-
-        if result.get("type") != "uri":
-            raise ValueError(
-                f"ext:propertyPathForText must be a URI, got type "
-                f"'{result.get('type')}': {result.get('value')}"
-            )
-
         uri = result["value"]
-        if not re.match(r'^https?://', uri):
-            raise ValueError(
-                f"ext:propertyPathForText URI must start with http:// or https://, "
-                f"got: {uri}"
-            )
-
+        
         return uri
