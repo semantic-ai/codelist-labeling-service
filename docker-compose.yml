@@ -29,6 +29,9 @@ services:
       MANIFESTATIONS_GRAPH: http://mu.semte.ch/graphs/public/pdf
       AI_GRAPH: http://mu.semte.ch/graphs/public/pdf
       NOMINATIM_ENDPOINT: http://nominatim:8080/
+      FORCE_VERSIONED_AGENT_URI: true
+      CONFIGURED_AGENT_URI: http://lblod.data.gift/id/components/codelist-labeling/decide/commit/92a6988130508c49c87b20d10bdd06bf188162b5
+      CONFIG_REPO_URL: https://github.com/lblod/app-decide/commit/92a6988130508c49c87b20d10bdd06bf188162b5
     restart: no
     volumes:
       - ./:/app

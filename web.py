@@ -8,7 +8,7 @@ from escape_helpers import sparql_escape_uri
 from fastapi import APIRouter, BackgroundTasks
 
 from decide_ai_service_base.task import Task
-from decide_ai_service_base.util import wait_for_triplestore, TaskProcessor, process_open_tasks, fail_busy_and_scheduled_tasks
+from decide_ai_service_base.util import wait_for_triplestore, TaskProcessor, process_open_tasks, fail_busy_and_scheduled_tasks, write_agent_info
 from decide_ai_service_base.schema import NotificationResponse, TaskOperationsResponse
 from src.task import ModelAnnotatingTask, ModelBatchAnnotatingTask, ClassifierTrainingTask, ImpactAssessmentTask, ClassifierAnnotatingTask
 
@@ -25,6 +25,10 @@ _open_tasks_lock = Lock()
 async def startup_event():
     wait_for_triplestore()
     fail_busy_and_scheduled_tasks()
+    write_agent_info("http://lblod.data.gift/id/components/codelist-labeling/v1.0.0", "impact_annotator")
+    write_agent_info("http://lblod.data.gift/id/components/codelist-labeling/v1.0.0", "model_annotator")
+    write_agent_info("http://lblod.data.gift/id/components/codelist-labeling/v1.0.0", "classifier_annotator")
+
     process_open_tasks(_open_tasks_lock)
 
 
