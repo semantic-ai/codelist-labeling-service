@@ -114,7 +114,7 @@ class ModelAnnotatingTask(CodeListTask):
                     break
                 except Exception as exc:
                     if attempt == max_retries:
-                        logger.warning(f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
+                        raise RuntimeError(f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
                     else:
                         logger.warning(f"LLM call attempt {attempt}/{max_retries} failed ({exc}); retrying.")
                         time.sleep(attempt)
