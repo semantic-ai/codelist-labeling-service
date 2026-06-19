@@ -9,9 +9,10 @@ from escape_helpers import sparql_escape_uri, sparql_escape_string
 import uuid 
 
 from decide_ai_service_base.task import DecisionTask, Task
-from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AI_COMPONENTS, AGENT_TYPES, get_prefixes_for_query, \
+from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AGENT_TYPES, get_prefixes_for_query, \
     GRAPHS
 from decide_ai_service_base.annotation import LinkingAnnotation
+from decide_ai_service_base.util import get_agent_uri
 
 from ..llm_models.llm_model_clients import create_llm_client
 from ..llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
@@ -131,7 +132,7 @@ class ModelAnnotatingTask(CodeListTask):
                 self.task_uri,
                 self.source,
                 concept_uri,
-                AI_COMPONENTS["model_annotater"],
+                get_agent_uri("model_annotator"),
                 AGENT_TYPES["ai_component"]
             )
             annotation.add_to_triplestore_if_not_exists()
@@ -156,7 +157,7 @@ class ModelAnnotatingTask(CodeListTask):
                 self.task_uri,
                 self.source,
                 uri,
-                AI_COMPONENTS["model_annotater"],
+                get_agent_uri("model_annotator"),
                 AGENT_TYPES["ai_component"]
             )
             annotation.add_to_triplestore_if_not_exists()

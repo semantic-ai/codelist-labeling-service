@@ -1,10 +1,11 @@
 import uuid
 from string import Template
-from decide_ai_service_base.sparql_config import AGENT_TYPES, get_prefixes_for_query, AI_COMPONENTS, TASK_OPERATIONS, GRAPHS
+from decide_ai_service_base.sparql_config import AGENT_TYPES, get_prefixes_for_query, TASK_OPERATIONS, GRAPHS
 from helpers import query, update, logger
 from decide_ai_service_base.annotation import LinkingAnnotation
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from escape_helpers import sparql_escape_uri, sparql_escape_string
+from decide_ai_service_base.util import get_agent_uri
 
 from .codelist import CodeListTask
 from ..classifier.predict import predict as classifier_predict
@@ -173,7 +174,7 @@ class ClassifierAnnotatingTask(CodeListTask):
                     self.task_uri,
                     uri,
                     concept_uri,
-                    AI_COMPONENTS["classifier_annotater"],
+                    get_agent_uri("classifier_annotator"),
                     AGENT_TYPES["ai_component"],
                 )
                 annotation.add_to_triplestore_if_not_exists()
