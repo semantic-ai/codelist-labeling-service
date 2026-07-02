@@ -50,7 +50,7 @@ No API key or extra package required. Point `base_url` at your Ollama instance.
    }
    ```
 
-2. Rebuild: `docker compose up --build`
+2. Rebuild: `docker compose up`
 
 #### OpenAI
 
@@ -68,7 +68,7 @@ No API key or extra package required. Point `base_url` at your Ollama instance.
    }
    ```
 
-2. Rebuild: `docker compose up --build`
+2. Rebuild: `docker compose up`
 
 
 ### Per-Codelist Prompts
