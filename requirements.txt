@@ -13,4 +13,5 @@ pydantic>=2.0.0
 fastapi
 debugpy == 1.8.19
 langchain-mistralai==1.1.2
+langchain-openai
 https://github.com/semantic-ai/decide-ai-service-base/releases/download/0.2.0/decide_ai_service_base-0.2.0-py3-none-any.whl
