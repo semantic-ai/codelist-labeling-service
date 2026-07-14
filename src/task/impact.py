@@ -272,7 +272,7 @@ class ImpactAssessmentTask(CodeListTask):
             annotation_uri=sparql_escape_uri(annotation_uri),
             assessment=sparql_escape_uri(mapping[assessment.impact_direction]),
             impact_scheme=sparql_escape_uri("http://mu.semte.ch/vocabularies/ext/impact"),
-            agent=get_agent_uri("impact_annotator")
+            agent=sparql_escape_uri(get_agent_uri("impact_annotator"))
             )
 
 
