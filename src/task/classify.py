@@ -57,17 +57,20 @@ class ClassifierAnnotatingTask(CodeListTask):
     def fetch_decisions_without_annotations_with_text(self, target_graph: str) -> list[dict]:
         concept_scheme_uri = self.fetch_codelist_uri_for_task()
         expression_filter = self.get_expressions_in_task_filter()
+        member_block = self.member_content_sparql_block("?s")
         q = Template(
-            get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct", "skos") + """
-            SELECT DISTINCT ?s ?title ?description ?decision_basis ?content
+            get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct", "skos", "schema") + """
+            SELECT ?s ?title ?description ?decision_basis ?content ?title_code ?work_type
+                   (GROUP_CONCAT(DISTINCT ?_member_text; separator="\\n\\n") AS ?member_content)
             WHERE {
-                $expression_Filter
+                $expression_filter
                 GRAPH $target_graph {
                     ?s rdf:type eli:Expression .
                     OPTIONAL { ?s eli:title ?title }
                     OPTIONAL { ?s eli:description ?description }
                     OPTIONAL { ?s eli-dl:decision_basis ?decision_basis }
                     OPTIONAL { ?s epvoc:expressionContent ?content }
+                    $member_block
                 }
                 FILTER NOT EXISTS {
                     VALUES ?g { $target_graph $ai_graph }
@@ -82,27 +85,23 @@ class ClassifierAnnotatingTask(CodeListTask):
                     }
                 }
             }
+            GROUP BY ?s ?title ?description ?decision_basis ?content ?title_code ?work_type
             """
         ).substitute(
             target_graph=sparql_escape_uri(target_graph),
             ai_graph=sparql_escape_uri(GRAPHS["ai"]),
             public_graph=sparql_escape_uri(GRAPHS["public"]),
             concept_scheme_uri=sparql_escape_uri(concept_scheme_uri),
-            expression_filter=expression_filter
+            expression_filter=expression_filter,
+            member_block=member_block,
         )
 
         response = query(q, sudo=True)
         results = []
         for b in response.get("results", {}).get("bindings", []):
-            text = "\n".join(
-                t for t in [
-                    b.get("title", {}).get("value", ""),
-                    b.get("description", {}).get("value", ""),
-                    b.get("decision_basis", {}).get("value", ""),
-                    b.get("content", {}).get("value", ""),
-                ] if t
-            )
-            results.append({"uri": b["s"]["value"], "text": text})
+            text = self.assemble_expression_text(b)
+            if text:
+                results.append({"uri": b["s"]["value"], "text": text})
         return results
 
     def process(self):

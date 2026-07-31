@@ -51,8 +51,10 @@ class ClassifierTrainingTask(CodeListTask):
 
     def fetch_decisions_with_classes(self) -> list[dict[str, str | list[str]]]:
         expression_filter = self.get_expressions_in_task_filter("?decision")
-        q = Template(get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct", "skos") + """
-        SELECT ?decision ?title ?description ?decision_basis ?content ?classes
+        member_block = self.member_content_sparql_block("?decision")
+        q = Template(get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct", "skos", "schema") + """
+        SELECT ?decision ?title ?description ?decision_basis ?content ?classes ?title_code ?work_type
+               (GROUP_CONCAT(DISTINCT ?_member_text; separator="\\n\\n") AS ?member_content)
         WHERE {
         {
             SELECT ?decision (GROUP_CONCAT(DISTINCT STR(?body); separator="|") AS ?classes)
@@ -82,14 +84,16 @@ class ClassifierTrainingTask(CodeListTask):
                 OPTIONAL { ?decision eli:description ?description }
                 OPTIONAL { ?decision eli-dl:decision_basis ?decision_basis }
                 OPTIONAL { ?decision epvoc:expressionContent ?content }
-                OPTIONAL { ?decision dct:language ?lang }
+                $member_block
             }
         }
+        GROUP BY ?decision ?title ?description ?decision_basis ?content ?classes ?title_code ?work_type
         """).substitute(
             expression_filter=expression_filter,
             ai_graph=sparql_escape_uri(GRAPHS['ai']),
             public_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
             concept_scheme_uri=sparql_escape_uri(self.fetch_codelist_uri_for_task()),
+            member_block=member_block,
         )
 
         res = query(q, sudo=True)
@@ -100,13 +104,8 @@ class ClassifierTrainingTask(CodeListTask):
             decision = b["decision"]["value"]
             classes_concat = b.get("classes", {}).get("value", "")
             classes = [c for c in classes_concat.split("|") if c]
-            title = b.get("title", {}).get("value", "")
-            description = b.get("description", {}).get("value", "")
-            decision_basis = b.get("decision_basis", {}).get("value", "")
-            content = b.get("content", {}).get("value", "")
 
-            text = "\n".join(
-                [t for t in [title, description, decision_basis, content] if t])
+            text = self.assemble_expression_text(b)
 
             results.append({
                 "decision": decision,

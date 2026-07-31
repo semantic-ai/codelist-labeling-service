@@ -116,6 +116,69 @@ class Codelist(list[CodelistEntry]):
 
 
 class CodeListTask(DecisionTask, ABC):
+
+    @staticmethod
+    def member_content_sparql_block(expr_var: str = "?s") -> str:
+        """Return SPARQL OPTIONAL blocks for work_type, title_code, and aggregated member content.
+
+        The caller must include ``schema`` in ``get_prefixes_for_query`` and
+        add a ``GROUP BY`` that covers ``?title_code`` and ``?work_type``
+        plus a ``GROUP_CONCAT(DISTINCT ?_member_text; separator="\\n\\n") AS ?member_content``
+        in the SELECT clause.
+        """
+        return f"""
+        OPTIONAL {{
+            ?_work eli:is_realized_by {expr_var} ;
+                   eli:work_type ?work_type .
+        }}
+        OPTIONAL {{ {expr_var} schema:code ?title_code }}
+        OPTIONAL {{
+            ?_work eli:is_realized_by {expr_var} ;
+                   eli:has_member ?_member_work .
+            ?_member_work eli:is_realized_by ?_member_expr .
+            ?_member_expr a eli:Expression .
+            OPTIONAL {{ ?_member_expr eli:title ?_m_title }}
+            OPTIONAL {{ ?_member_expr schema:code ?_m_code }}
+            OPTIONAL {{ ?_member_expr eli:description ?_m_description }}
+            OPTIONAL {{ ?_member_expr epvoc:expressionContent ?_m_content }}
+
+            BIND(CONCAT(
+                COALESCE(STR(?_m_code), ""), "\\n",
+                COALESCE(STR(?_m_title), ""), "\\n",
+                COALESCE(STR(?_m_description), ""), "\\n",
+                COALESCE(STR(?_m_content), "")
+            ) AS ?_member_text)
+        }}
+        """
+
+    @staticmethod
+    def assemble_expression_text(binding: dict) -> str:
+        """Assemble classifier input text from a SPARQL binding row.
+
+        Produces a structured text block with an optional header
+        (work_type + code), the core expression fields, and any
+        aggregated member content.
+        """
+        parts: list[str] = []
+
+        code = binding.get("title_code", {}).get("value", "")
+        work_type_raw = binding.get("work_type", {}).get("value", "")
+        work_type = work_type_raw.rsplit("/", 1)[-1] if work_type_raw else ""
+
+        if work_type or code:
+            parts.append(f"{work_type} [{code}]" if code else work_type)
+
+        for field in ("title", "description", "decision_basis", "content"):
+            val = binding.get(field, {}).get("value", "")
+            if val:
+                parts.append(val)
+
+        member_content = binding.get("member_content", {}).get("value", "")
+        if member_content:
+            parts.append(member_content)
+
+        return "\n".join(parts)
+
     def fetch_codelist_uri_for_task(self) -> str:
         """Resolve the SKOS ConceptScheme URI from the Job linked to this task."""
         q = Template(
