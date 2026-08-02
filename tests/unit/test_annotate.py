@@ -37,7 +37,6 @@ from escape_helpers import sparql_escape_uri
 from decide_ai_service_base.sparql_config import GRAPHS
 from src.task.annotate import ModelAnnotatingTask, ModelBatchAnnotatingTask
 from src.task.codelist import Codelist, CodelistEntry
-from src.llm_models.llm_task_models import EntityLinkingTaskOutput
 from src.config import AppConfig, LlmConfig
 
 from tests.unit.conftest import (
@@ -128,9 +127,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """A single matching label returned by the LLM produces one annotation."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy"]
-        )
+        annotating_task._llm.return_value = ["Affordable and Clean Energy"]
 
         annotating_task.process()
 
@@ -149,9 +146,10 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """Two matching labels produce two separate annotations."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy", "Climate Action"]
-        )
+        annotating_task._llm.return_value = [
+            "Affordable and Clean Energy",
+            "Climate Action",
+        ]
 
         annotating_task.process()
 
@@ -162,9 +160,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """The oa:hasTarget of every inserted annotation is the task's source URI."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy"]
-        )
+        annotating_task._llm.return_value = ["Affordable and Clean Energy"]
 
         annotating_task.process()
 
@@ -180,9 +176,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """The oa:hasBody of the annotation is the resolved SKOS concept URI."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Climate Action"]
-        )
+        annotating_task._llm.return_value = ["Climate Action"]
 
         annotating_task.process()
 
@@ -199,9 +193,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """Calling process() twice produces exactly one annotation (idempotent guard)."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy"]
-        )
+        annotating_task._llm.return_value = ["Affordable and Clean Energy"]
 
         annotating_task.process()
         annotating_task.process()
@@ -254,9 +246,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """A label not present in the codelist is silently ignored."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Unknown SDG Goal 99"]
-        )
+        annotating_task._llm.return_value = ["Unknown SDG Goal 99"]
 
         annotating_task.process()
 
@@ -265,10 +255,8 @@ class TestModelAnnotatingTaskProcess:
     def test_skips_annotation_when_llm_returns_empty_list(
         self, annotating_task, expression_content_triple
     ):
-        """An empty designated_classes list results in zero annotations."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=[]
-        )
+        """An empty response list results in zero annotations."""
+        annotating_task._llm.return_value = []
 
         annotating_task.process()
 
@@ -294,9 +282,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """The user message passed to the LLM contains the codelist labels."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=[]
-        )
+        annotating_task._llm.return_value = []
 
         annotating_task.process()
 
@@ -309,9 +295,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """The user message passed to the LLM contains the fetched expression text."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=[]
-        )
+        annotating_task._llm.return_value = []
 
         annotating_task.process()
 
@@ -647,9 +631,7 @@ class TestFetchTextWithPropertyPath:
         """process() uses fetch_text_with_property_path when _property_path_for_text is set."""
         epvoc_content = "https://data.europarl.europa.eu/def/epvoc#expressionContent"
         annotating_task._property_path_for_text = epvoc_content
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy"]
-        )
+        annotating_task._llm.return_value = ["Affordable and Clean Energy"]
 
         annotating_task.process()
 
@@ -660,9 +642,7 @@ class TestFetchTextWithPropertyPath:
     ):
         """process() falls back to fetch_data() when _property_path_for_text is None."""
         annotating_task._property_path_for_text = None
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy"]
-        )
+        annotating_task._llm.return_value = ["Affordable and Clean Energy"]
 
         annotating_task.process()
 

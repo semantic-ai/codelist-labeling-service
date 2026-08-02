@@ -22,7 +22,7 @@
   "codelist_prompts": {
     "default": {
       "system_message": "You are a juridical and administrative assistant that must determine the best matching codes from a list with a given text.",
-      "user_message": "Determine the best matching codes from the following list for the given public decision.\n\n\"\"\"CODE LIST:\n{code_list}\n\"\"\"\n\n\"\"\"DECISION TEXT:\n{decision_text}\n\"\"\"Provide your answer as a list of strings representing the matching codes. You MUST only return values that appear EXACTLY in the CODE LIST above, NOT from the label descriptions. Provide all matching codes (can be a single one), but only those that are truly matching. If none of the codes match, return an empty list."
+      "user_message": "Determine the best matching codes from the following list for the given public decision.\n\n\"\"\"CODE LIST:\n{code_list}\n\"\"\"\n\n\"\"\"DECISION TEXT:\n{decision_text}\n\"\"\"Provide your answer as a bare JSON array of strings representing the matching codes. You MUST only return values that appear EXACTLY in the CODE LIST above, NOT from the label descriptions. Provide all matching codes (can be a single one), but only those that are truly matching. If none of the codes match, return an empty array."
     },
     "http://data.lblod.gift/id/conceptscheme/sdg-simple": {
       "system_message": "You are an expert at classifying administrative decision texts against the UN Sustainable Development Goals (SDGs 1–17). You identify ALL applicable SDGs based on concrete decisions, actions, commitments, or implementations mentioned in the text. You respond only with valid JSON. You MUST strictly use only codes from the provided reference list. No other labels or values are allowed.",

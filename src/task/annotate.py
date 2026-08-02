@@ -15,7 +15,7 @@ from decide_ai_service_base.annotation import LinkingAnnotation
 from decide_ai_service_base.util import get_agent_uri
 
 from ..llm_models.llm_model_clients import create_llm_client
-from ..llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
+from ..llm_models.llm_task_models import LlmTaskInput
 from .codelist import Codelist, CodelistEntry, CodeListTask
 from ..config import get_config
 
@@ -104,13 +104,12 @@ class ModelAnnotatingTask(CodeListTask):
                                      user_message=self._llm_user_message.format(
                                          code_list=labels_for_prompt, decision_text=task_data),
                                      assistant_message=None,
-                                     output_format=EntityLinkingTaskOutput)
+                                     output_format=list[str])
 
 
             for attempt in range(1, max_retries + 1):
                 try:
-                    response = self._llm(llm_input)
-                    classes = response.designated_classes
+                    classes = self._llm(llm_input)
                     
                     break
                 except Exception as exc:

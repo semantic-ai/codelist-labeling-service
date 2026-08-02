@@ -1,0 +1,22 @@
+# Keep the production build context deny-by-default. This prevents local
+# credentials, databases, evaluations, caches, and repository metadata from
+# being copied by the base image's final `ONBUILD ADD . /app` instruction.
+*
+
+# Inputs required by the base image's ONBUILD steps.
+!Dockerfile
+!build.sh
+!requirements.txt
+
+# Runtime application files.
+!web.py
+!config.json
+!src/
+!src/**
+
+# Do not include locally compiled Python artifacts from the source tree.
+src/**/__pycache__/
+src/**/*.py[cod]
+
+# Preserve the software license in the image.
+!LICENSE

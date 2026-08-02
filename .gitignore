@@ -6,10 +6,10 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments
 .venv
 .idea
 .vscode
+.env
 
 # Nominatim data
 nominatim-data/
@@ -28,3 +28,4 @@ testing.ipynb
 /custom-config
 docker-compose-standalone.yml
 test_task_flow.ipynb
+IMPLEMENTATION_AUDIT.md

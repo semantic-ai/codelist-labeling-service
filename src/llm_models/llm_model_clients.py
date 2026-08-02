@@ -3,10 +3,11 @@
 import json
 import logging
 import re
+from typing import Any
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel
+from pydantic import TypeAdapter
 
 from .llm_task_models import LlmTaskInput
 
@@ -19,8 +20,9 @@ class LangChainLlmClient:
     def __init__(self, chat_model):
         self._chat_model = chat_model
 
-    def __call__(self, input: LlmTaskInput) -> BaseModel:
-        schema_json = json.dumps(input.output_format.model_json_schema(), indent=2)
+    def __call__(self, input: LlmTaskInput) -> Any:
+        output_adapter = TypeAdapter(input.output_format)
+        schema_json = json.dumps(output_adapter.json_schema(), indent=2)
 
         messages = [
             SystemMessage(content=input.system_message),
@@ -34,33 +36,33 @@ class LangChainLlmClient:
 
         response = self._chat_model.invoke(messages)
         raw_text = response.content
-        return self._parse_response(raw_text, input.output_format)
+        return self._parse_response(raw_text, output_adapter)
 
     @staticmethod
-    def _parse_response(raw_text: str, output_format: type[BaseModel]) -> BaseModel:
-        """Extract JSON from the LLM text response and parse into the Pydantic model."""
+    def _parse_response(raw_text: str, output_adapter: TypeAdapter) -> Any:
+        """Extract JSON from the LLM text response and validate its output type."""
         text = raw_text.strip()
 
         # Try direct JSON parse
         try:
-            return output_format.model_validate(json.loads(text))
-        except (json.JSONDecodeError, Exception):
+            return output_adapter.validate_python(json.loads(text))
+        except (json.JSONDecodeError, ValueError):
             pass
 
         # Try extracting from markdown code blocks
         match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', text, re.DOTALL)
         if match:
             try:
-                return output_format.model_validate(json.loads(match.group(1).strip()))
-            except (json.JSONDecodeError, Exception):
+                return output_adapter.validate_python(json.loads(match.group(1).strip()))
+            except (json.JSONDecodeError, ValueError):
                 pass
 
         # Try finding a JSON object or array
         match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
         if match:
             try:
-                return output_format.model_validate(json.loads(match.group(1)))
-            except (json.JSONDecodeError, Exception):
+                return output_adapter.validate_python(json.loads(match.group(1)))
+            except (json.JSONDecodeError, ValueError):
                 pass
 
         raise ValueError(

@@ -1,5 +1,6 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
-from typing import Type
 
 
 class LlmTaskInput(BaseModel):
@@ -13,14 +14,6 @@ class LlmTaskInput(BaseModel):
         description="String containing the start of the LLM's answer",
         default=None
     )
-    output_format: Type[BaseModel] = Field(
-        description="Output scheme for LLM response"
-    )
-
-
-class EntityLinkingTaskOutput(BaseModel):
-    designated_classes: list[str] = Field(
-        description="List of matching class labels copied exactly from the provided CODE LIST. "
-        "Each value must be the full label text as it appears in the list. "
-        "Return an empty list if none of the classes match."
+    output_format: Any = Field(
+        description="Python type used to validate the LLM response"
     )
