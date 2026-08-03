@@ -90,6 +90,17 @@ The `codelist_prompts` section in `config.json` lets you override the system and
 }
 ```
 
+## Logging
+
+Application logs are controlled with `LOG_LEVEL` (default: `INFO`). SPARQL
+query and update bodies are disabled by default because they are large,
+multiline records; enable them temporarily with `LOG_SPARQL_ALL=true` when
+query-level troubleshooting is needed.
+
+LLM calls log only decision identifiers, payload sizes, code/description
+counts, and returned codes. Full decision text and codelist descriptions are
+not written to normal logs.
+
 ## Running the tests
 
 1. Have a Virtuoso running on localhost. The easiest way to achieve this:

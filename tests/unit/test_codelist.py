@@ -192,6 +192,26 @@ class TestCodelistFromUri:
         assert "Affordable and Clean Energy" in labels
         assert "Climate Action" in labels
 
+    def test_uses_notation_once_when_pref_label_has_language_variants(self):
+        helpers.update(f"""
+            INSERT DATA {{
+                GRAPH {sparql_escape_uri(_PUBLIC_GRAPH)} {{
+                    {sparql_escape_uri(CONCEPT_URI)}
+                        {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} ;
+                        {sparql_escape_uri(NS["skos"] + "prefLabel")} "Long label", "Long label"@en ;
+                        {sparql_escape_uri(NS["skos"] + "notation")} "A21" ;
+                        {sparql_escape_uri(NS["skos"] + "definition")} "Description" .
+                }}
+            }}
+        """)
+
+        codelist = Codelist.from_uri(CONCEPT_SCHEME_URI)
+
+        assert codelist.get_labels() == ["A21"]
+        assert codelist.get_labels_with_definitions() == (
+            "['A21']\n\nLabel descriptions:\n{'A21': 'Description'}"
+        )
+
     def test_returns_codelist_instance(self, two_english_concepts):
         result = Codelist.from_uri(CONCEPT_SCHEME_URI)
 

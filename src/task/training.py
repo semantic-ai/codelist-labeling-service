@@ -1,4 +1,4 @@
-from helpers import query, update
+from helpers import query, update, logger
 from escape_helpers import sparql_escape_uri
 
 from string import Template
@@ -23,12 +23,20 @@ class ClassifierTrainingTask(CodeListTask):
 
         decisions = [d for d in decisions if d.get("classes")]
         if not decisions:
-            print("No labeled decisions found; skipping training.", flush=True)
+            logger.warning(
+                "No labeled decisions found for training task %s; skipping.",
+                self.task_uri,
+            )
             return
 
         ml_config = get_config().ml_training
 
-        print("Started training...", flush=True)
+        logger.info(
+            "Starting classifier training task %s with %d decisions and %d labels",
+            self.task_uri,
+            len(decisions),
+            len(codelist_entries),
+        )
         train(
             decisions,
             codelist_entries.get_labels(),
@@ -38,7 +46,7 @@ class ClassifierTrainingTask(CodeListTask):
             epochs=ml_config.epochs,
             weight_decay=ml_config.weight_decay,
         )
-        print("Done training!", flush=True)
+        logger.info("Completed classifier training task %s", self.task_uri)
 
     @staticmethod
     def convert_classes_to_original_names(decisions: list[dict[str, str | list[str]]], codelist: Codelist):

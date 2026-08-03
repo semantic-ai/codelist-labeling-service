@@ -1,12 +1,11 @@
-import logging
 import os
 import random
 import time
 import uuid
+import json
 from string import Template
 from helpers import query, update, logger
 from escape_helpers import sparql_escape_uri, sparql_escape_string
-import uuid 
 
 from decide_ai_service_base.task import DecisionTask, Task
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AGENT_TYPES, get_prefixes_for_query, \
@@ -54,25 +53,41 @@ class ModelAnnotatingTask(CodeListTask):
         Uses sparql_escape_uri() to safely interpolate the property URI,
         preventing SPARQL injection.
         """
+        if property_uri.startswith("<") and property_uri.endswith(">"):
+            property_uri = property_uri[1:-1]
+
+        property_term = sparql_escape_uri(property_uri)
+        member_block = self.member_content_sparql_block(
+            "?s", content_property=property_term
+        )
         q = Template(
-            get_prefixes_for_query("eli") +
+            get_prefixes_for_query("rdf", "eli", "eli-dl", "schema") +
             """
-            SELECT ?text WHERE {
+            SELECT ?s ?title ?description ?decision_basis ?content ?title_code ?work_type
+                   (GROUP_CONCAT(DISTINCT ?_member_text; separator="\\n\\n") AS ?member_content)
+            WHERE {
                 GRAPH ?graph {
                     VALUES ?s { $source }
-                    ?s $property ?text .
+                    ?s rdf:type eli:Expression .
+                    OPTIONAL { ?s eli:title ?title }
+                    OPTIONAL { ?s eli:description ?description }
+                    OPTIONAL { ?s eli-dl:decision_basis ?decision_basis }
+                    OPTIONAL { ?s $property ?content }
+                    $member_block
                 }
             }
+            GROUP BY ?s ?title ?description ?decision_basis ?content ?title_code ?work_type
             """
         ).substitute(
             source=sparql_escape_uri(self.source),
-            property=property_uri
+            property=property_term,
+            member_block=member_block,
         )
 
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
-        texts = [b["text"]["value"] for b in bindings if "text" in b]
-        return "\n".join(texts)
+        texts = [self.assemble_expression_text(b) for b in bindings]
+        return "\n\n".join(text for text in texts if text)
 
     def process(self):
         if self._property_path_for_text:
@@ -100,31 +115,71 @@ class ModelAnnotatingTask(CodeListTask):
             return
         else:
             max_retries = 3
-            llm_input = LlmTaskInput(system_message=self._llm_system_message,
-                                     user_message=self._llm_user_message.format(
-                                         code_list=labels_for_prompt, decision_text=task_data),
-                                     assistant_message=None,
-                                     output_format=list[str])
+            user_message = self._llm_user_message.format(
+                code_list=labels_for_prompt,
+                decision_text=task_data,
+            )
+            llm_input = LlmTaskInput(
+                system_message=self._llm_system_message,
+                user_message=user_message,
+                assistant_message=None,
+                output_format=list[str],
+            )
+            description_count = sum(
+                bool(entry.definition) for entry in self._codelist_entries
+            )
+            logger.info(
+                "Calling LLM for decision %s "
+                "(text_chars=%d, prompt_chars=%d, codes=%d, descriptions=%d)",
+                self.source,
+                len(task_data),
+                len(user_message),
+                len(labels),
+                description_count,
+            )
 
+            # logger.info(
+            #     "LLM input for decision %s:\n%s",
+            #     self.source,
+            #     llm_input.model_dump_json(exclude={"output_format"})
+            # )
+            
 
             for attempt in range(1, max_retries + 1):
                 try:
                     classes = self._llm(llm_input)
-                    
                     break
                 except Exception as exc:
                     if attempt == max_retries:
-                        raise RuntimeError(f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
-                    else:
-                        logger.warning(f"LLM call attempt {attempt}/{max_retries} failed ({exc}); retrying.")
-                        time.sleep(attempt)
+                        raise RuntimeError(
+                            f"LLM call failed after {max_retries} attempts "
+                            f"({exc}); skipping annotation."
+                        ) from exc
+                    logger.warning(
+                        "LLM call for decision %s failed on attempt %d/%d "
+                        "(%s); retrying.",
+                        self.source,
+                        attempt,
+                        max_retries,
+                        exc,
+                    )
+                    time.sleep(attempt)
 
-        logger.warning(f"LLM returned classes: {classes}")
+        logger.info(
+            "Classification completed for decision %s: returned_codes=%s",
+            self.source,
+            classes,
+        )
 
         for c in classes:
             concept_uri = self._codelist_entries.resolve_label_to_uri(c, self._label_to_uri)
             if not concept_uri:
-                logger.warning(f"No URI found for class '{c}', skipping annotation.")
+                logger.warning(
+                    "No concept URI found for returned code %r on decision %s; "
+                    "skipping annotation.",
+                    c,
+                    self.source,
+                )
                 continue
 
             annotation = LinkingAnnotation(
@@ -135,7 +190,12 @@ class ModelAnnotatingTask(CodeListTask):
                 AGENT_TYPES["ai_component"]
             )
             annotation.add_to_triplestore_if_not_exists()
-            logger.warning("Created SDG annotation")
+            logger.info(
+                "Stored model annotation for decision %s: code=%s, concept=%s",
+                self.source,
+                c,
+                concept_uri,
+            )
 
         if classes:
             self.results_container_uris.append(self.create_output_container(self.source))
@@ -143,9 +203,12 @@ class ModelAnnotatingTask(CodeListTask):
             self.store_no_match()
 
         rate_limit_delay = float(os.environ.get("RATE_LIMIT_DELAY_SECONDS", "0"))
-        logger.warning(f"[RATE-LIMIT] Waiting for {rate_limit_delay} seconds to respect rate limits.")
-        print(f"Waiting for {rate_limit_delay} seconds to respect rate limits.", flush=True)
         if rate_limit_delay > 0:
+            logger.info(
+                "Rate-limit delay for decision %s: %.1f seconds",
+                self.source,
+                rate_limit_delay,
+            )
             time.sleep(rate_limit_delay)
     
     def store_no_match(self):
@@ -221,7 +284,11 @@ class ModelBatchAnnotatingTask(CodeListTask):
             target_nodes=target_nodes,
             target_classes=target_classes,
         )
-        print(f"{len(decision_uris)} decisions to process.", flush=True)
+        logger.info(
+            "Model annotation batch %s contains %d decisions",
+            self.task_uri,
+            len(decision_uris),
+        )
 
         for i, decision_uri in enumerate(decision_uris):
             task = ModelAnnotatingTask(
@@ -233,8 +300,12 @@ class ModelBatchAnnotatingTask(CodeListTask):
             task.process()
             self.results_container_uris.extend(task.results_container_uris)
 
-            print(
-                f"Processed decision {i+1}/{len(decision_uris)}: {decision_uri}", flush=True)
+            logger.info(
+                "Processed model annotation %d/%d: %s",
+                i + 1,
+                len(decision_uris),
+                decision_uri,
+            )
 
     def fetch_decisions_without_annotations(
         self,

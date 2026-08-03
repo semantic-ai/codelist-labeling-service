@@ -302,6 +302,21 @@ class TestModelAnnotatingTaskProcess:
         llm_input = annotating_task._llm.call_args[0][0]
         assert EXPRESSION_CONTENT in llm_input.user_message
 
+    def test_llm_receives_one_well_formed_prompt(
+        self, annotating_task, expression_content_triple
+    ):
+        """Logging does not reflect duplicate prompt construction or LLM calls."""
+        annotating_task._llm.return_value = []
+
+        annotating_task.process()
+
+        annotating_task._llm.assert_called_once()
+        llm_input = annotating_task._llm.call_args.args[0]
+        assert llm_input.user_message.count("CODE LIST:") == 1
+        assert llm_input.user_message.count("DECISION TEXT:") == 1
+        assert llm_input.user_message.count(EXPRESSION_CONTENT) == 1
+        assert llm_input.output_format == list[str]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ModelBatchAnnotatingTask – fetch_decisions_without_annotations()
@@ -624,6 +639,54 @@ class TestFetchTextWithPropertyPath:
         )
 
         assert result == ""
+
+    def test_includes_text_from_member_expressions(
+        self, annotating_task, expression_content_triple
+    ):
+        member_work = "http://test.example.org/works/member-1"
+        member_expression = "http://test.example.org/expressions/member-1"
+        member_content = (
+            "ACT-1\n"
+            "actie [ACT-1]\n"
+            "Content from an underlying action."
+        )
+        member_content_literal = member_content.replace("\n", "\\n")
+        helpers.update(f"""
+            INSERT DATA {{
+                GRAPH {sparql_escape_uri(GRAPHS["expressions"])} {{
+                    <http://test.example.org/works/plan-1>
+                        {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(EXPRESSION_URI)} ;
+                        {sparql_escape_uri(NS["eli"] + "work_type")} <http://lblod.data.gift/vocabularies/vmm/Actieplan> ;
+                        {sparql_escape_uri(NS["eli"] + "has_member")} {sparql_escape_uri(member_work)} .
+                    {sparql_escape_uri(EXPRESSION_URI)}
+                        <https://schema.org/code> "AP-1" ;
+                        {sparql_escape_uri(NS["eli"] + "title")} "actieplan [AP-1]" ;
+                        {sparql_escape_uri(NS["eli"] + "description")} "Plan description" .
+                    {sparql_escape_uri(member_work)}
+                        {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(member_expression)} .
+                    {sparql_escape_uri(member_expression)}
+                        a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                        <https://schema.org/code> "ACT-1" ;
+                        {sparql_escape_uri(NS["eli"] + "title")} "actie [ACT-1]" ;
+                        {sparql_escape_uri(NS["eli"] + "description")} "Action description" ;
+                        {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "{member_content_literal}" .
+                }}
+            }}
+        """)
+
+        result = annotating_task.fetch_text_with_property_path(
+            "<https://data.europarl.europa.eu/def/epvoc#expressionContent>"
+        )
+
+        assert result == (
+            "Actieplan [AP-1]\n"
+            "Plan description\n"
+            f"{EXPRESSION_CONTENT}\n"
+            "ACT-1\n"
+            "actie [ACT-1]\n"
+            "Action description\n"
+            "Content from an underlying action."
+        )
 
     def test_process_uses_property_path_when_set(
         self, annotating_task, expression_content_triple

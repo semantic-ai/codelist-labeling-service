@@ -31,14 +31,12 @@ def test_client_accepts_and_returns_a_bare_list():
     result = client(make_list_task_input())
 
     assert result == ["Class A", "Class B"]
-    rendered_prompt = chat_model.messages[1].content
-    assert '"type": "array"' in rendered_prompt
-    assert "designated_classes" not in rendered_prompt
 
 
-def test_client_rejects_the_old_object_wrapper():
-    chat_model = FakeChatModel('{"designated_classes": ["Class A"]}')
+def test_client_unwraps_single_key_object():
+    chat_model = FakeChatModel('{"items": ["Class A"]}')
     client = LangChainLlmClient(chat_model)
 
-    with pytest.raises(ValueError, match="Could not parse valid JSON"):
-        client(make_list_task_input())
+    result = client(make_list_task_input())
+
+    assert result == ["Class A"]

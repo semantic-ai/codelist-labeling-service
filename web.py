@@ -1,8 +1,6 @@
-import logging
-import os
 from threading import Lock
 
-from helpers import query, log
+from helpers import query, log, logger as template_logger
 from escape_helpers import sparql_escape_uri
 
 from fastapi import APIRouter, BackgroundTasks
@@ -10,14 +8,12 @@ from fastapi import APIRouter, BackgroundTasks
 from decide_ai_service_base.task import Task
 from decide_ai_service_base.util import wait_for_triplestore, TaskProcessor, process_open_tasks, fail_busy_and_scheduled_tasks, write_agent_info
 from decide_ai_service_base.schema import NotificationResponse, TaskOperationsResponse
+from src.logging_config import configure_logging
 from src.task import ModelAnnotatingTask, ModelBatchAnnotatingTask, ClassifierTrainingTask, ImpactAssessmentTask, ClassifierAnnotatingTask
 
-# Configure root logger level from LOG_LEVEL env var.
-# The mu-python-template only configures its own 'MU_PYTHON_TEMPLATE_LOGGER',
-# but task classes use per-class loggers (e.g. 'ModelAnnotatingTask') that
-# inherit from the root logger. Without this, INFO/DEBUG messages are dropped.
-_log_level = os.environ.get("LOG_LEVEL", "WARNING").upper()
-logging.basicConfig(level=getattr(logging, _log_level, logging.WARNING))
+# The template logger already writes to stdout and /logs/logs.log.  Keep it
+# from propagating into the root handler, which would duplicate every record.
+configure_logging(template_logger)
 
 _open_tasks_lock = Lock()
 

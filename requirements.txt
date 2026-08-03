@@ -1,4 +1,5 @@
---extra-index-url https://download.pytorch.org/whl/cpu
+# Keep the PyTorch repository package-scoped; uv prioritizes extra indexes globally.
+--find-links https://download.pytorch.org/whl/cpu/torch
 torch==2.13.0+cpu
 gitpython
 fire
@@ -8,7 +9,7 @@ pytz
 langchain==1.2.15
 langchain-ollama==1.1.0
 transformers
-datasets
+datasets>=5.0.0,<6.0.0
 pydantic>=2.0.0
 fastapi
 debugpy == 1.8.19

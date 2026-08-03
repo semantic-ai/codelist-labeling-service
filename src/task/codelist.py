@@ -26,15 +26,18 @@ class Codelist(list[CodelistEntry]):
         q = f"""
         PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 
-        SELECT ?concept ?label ?definition
+        SELECT DISTINCT ?concept ?code ?definition
         WHERE {{
             ?concept skos:inScheme {sparql_escape_uri(concept_scheme_uri)} ;
-                     skos:prefLabel ?label .
-            FILTER(LANG(?label) = "en" || LANG(?label) = "")
+                     skos:prefLabel ?prefLabel .
+            FILTER(LANG(?prefLabel) = "en" || LANG(?prefLabel) = "")
+            OPTIONAL {{ ?concept skos:notation ?notation . }}
+            BIND(COALESCE(STR(?notation), STR(?prefLabel)) AS ?code)
             OPTIONAL {{
-                ?concept skos:definition ?definition .
-                FILTER(LANG(?definition) = "en" || LANG(?definition) = "")
+                ?concept skos:definition ?rawDefinition .
+                FILTER(LANG(?rawDefinition) = "en" || LANG(?rawDefinition) = "")
             }}
+            BIND(STR(?rawDefinition) AS ?definition)
         }}
         """
 
@@ -47,11 +50,11 @@ class Codelist(list[CodelistEntry]):
         entries = [
             CodelistEntry(
                 uri=b["concept"]["value"],
-                label=b["label"]["value"],
+                label=b["code"]["value"],
                 definition=b["definition"]["value"] if "definition" in b else None,
             )
             for b in bindings
-            if "concept" in b and "label" in b
+            if "concept" in b and "code" in b
         ]
 
         logger.info("Fetched %d concepts from scheme %s", len(entries), concept_scheme_uri)
@@ -118,7 +121,10 @@ class Codelist(list[CodelistEntry]):
 class CodeListTask(DecisionTask, ABC):
 
     @staticmethod
-    def member_content_sparql_block(expr_var: str = "?s") -> str:
+    def member_content_sparql_block(
+        expr_var: str = "?s",
+        content_property: str = "epvoc:expressionContent",
+    ) -> str:
         """Return SPARQL OPTIONAL blocks for work_type, title_code, and aggregated member content.
 
         The caller must include ``schema`` in ``get_prefixes_for_query`` and
@@ -140,7 +146,7 @@ class CodeListTask(DecisionTask, ABC):
             OPTIONAL {{ ?_member_expr eli:title ?_m_title }}
             OPTIONAL {{ ?_member_expr schema:code ?_m_code }}
             OPTIONAL {{ ?_member_expr eli:description ?_m_description }}
-            OPTIONAL {{ ?_member_expr epvoc:expressionContent ?_m_content }}
+            OPTIONAL {{ ?_member_expr {content_property} ?_m_content }}
 
             BIND(CONCAT(
                 COALESCE(STR(?_m_code), ""), "\\n",
@@ -153,11 +159,13 @@ class CodeListTask(DecisionTask, ABC):
 
     @staticmethod
     def assemble_expression_text(binding: dict) -> str:
-        """Assemble classifier input text from a SPARQL binding row.
+        """Assemble classification input text from a SPARQL binding row.
 
         Produces a structured text block with an optional header
         (work_type + code), the core expression fields, and any
-        aggregated member content.
+        aggregated member content. Exact repeated lines are emitted once;
+        VMM ``expressionContent`` values can already contain the code/title
+        metadata that is also available through separate RDF properties.
         """
         parts: list[str] = []
 
@@ -177,7 +185,27 @@ class CodeListTask(DecisionTask, ABC):
         if member_content:
             parts.append(member_content)
 
-        return "\n".join(parts)
+        lines: list[str] = []
+        seen_lines: set[str] = set()
+        for part in parts:
+            for raw_line in part.splitlines():
+                line = raw_line.strip()
+                if not line:
+                    if lines and lines[-1]:
+                        lines.append("")
+                    continue
+
+                normalized = " ".join(line.split()).casefold()
+                if normalized in seen_lines:
+                    continue
+
+                seen_lines.add(normalized)
+                lines.append(line)
+
+        while lines and not lines[-1]:
+            lines.pop()
+
+        return "\n".join(lines)
 
     def fetch_codelist_uri_for_task(self) -> str:
         """Resolve the SKOS ConceptScheme URI from the Job linked to this task."""

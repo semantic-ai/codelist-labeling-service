@@ -145,7 +145,11 @@ class ClassifierAnnotatingTask(CodeListTask):
         label_to_uri = codelist.build_label_to_uri_map()
 
         decisions = self.fetch_decisions_without_annotations_with_text(target_graph)
-        print(f"{len(decisions)} decisions to classify.", flush=True)
+        logger.info(
+            "Classifier annotation task %s contains %d decisions",
+            self.task_uri,
+            len(decisions),
+        )
 
         for i, decision in enumerate(decisions):
             uri, text = decision["uri"], decision["text"]
@@ -179,9 +183,12 @@ class ClassifierAnnotatingTask(CodeListTask):
                 annotation.add_to_triplestore_if_not_exists()
 
             self.results_container_uris.append(self.create_output_container(uri))
-            print(
-                f"Classified {i+1}/{len(decisions)}: {uri} → {[l for l, _ in predictions]}",
-                flush=True,
+            logger.info(
+                "Processed classifier annotation %d/%d: %s; matched_codes=%s",
+                i + 1,
+                len(decisions),
+                uri,
+                [label for label, _ in predictions],
             )
 
     def create_output_container(self, resource: str) -> str:

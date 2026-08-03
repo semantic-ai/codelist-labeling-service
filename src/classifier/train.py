@@ -1,4 +1,5 @@
 import git
+import logging
 from datetime import datetime
 from huggingface_hub import login, ModelCard
 from .data import get_dataset_cls
@@ -8,6 +9,9 @@ from ..config import get_config
 
 from helpers import update
 from transformers import AutoTokenizer, DataCollatorWithPadding, AutoModelForSequenceClassification, TrainingArguments, Trainer
+
+
+logger = logging.getLogger(__name__)
 
 
 def _build_model_card(
@@ -126,13 +130,16 @@ def train(
     try:
         commit_info = trainer.push_to_hub(blocking=True)
     except Exception as exc:
-        print(f"Push to hub skipped/failed: {exc}", flush=True)
+        logger.warning("Push to Hugging Face Hub failed: %s", exc)
     results = trainer.evaluate()
 
     try:
         repo = git.Repo(search_parent_directories=True)
     except Exception as exc:
-        print(f"Git repo not found, skipping metadata registration: {exc}", flush=True)
+        logger.warning(
+            "Git repository not found; skipping model metadata registration: %s",
+            exc,
+        )
         repo = None
 
     if commit_info:
@@ -153,4 +160,4 @@ def train(
                 results=results
             )
             update(query_str, sudo=True)
-            print(query_str, flush=True)
+            logger.debug("Registered model metadata with SPARQL update: %s", query_str)

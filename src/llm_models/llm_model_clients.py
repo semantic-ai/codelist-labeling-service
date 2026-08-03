@@ -22,14 +22,12 @@ class LangChainLlmClient:
 
     def __call__(self, input: LlmTaskInput) -> Any:
         output_adapter = TypeAdapter(input.output_format)
-        schema_json = json.dumps(output_adapter.json_schema(), indent=2)
 
         messages = [
             SystemMessage(content=input.system_message),
             HumanMessage(content=(
                 f"{input.user_message}\n\n"
-                f"IMPORTANT: You must respond ONLY with valid JSON matching this schema:\n"
-                f"{schema_json}\n"
+                f"IMPORTANT: Respond ONLY with the JSON value. "
                 f"Do not include any text before or after the JSON."
             )),
         ]
@@ -64,6 +62,15 @@ class LangChainLlmClient:
                 return output_adapter.validate_python(json.loads(match.group(1)))
             except (json.JSONDecodeError, ValueError):
                 pass
+
+        # Unwrap single-key dict (e.g. {"items": [...]}) and validate the inner value
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict) and len(parsed) == 1:
+                inner = next(iter(parsed.values()))
+                return output_adapter.validate_python(inner)
+        except (json.JSONDecodeError, ValueError):
+            pass
 
         raise ValueError(
             f"Could not parse valid JSON from LLM response. Raw text: {text[:500]}"
