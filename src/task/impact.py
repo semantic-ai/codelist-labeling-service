@@ -1,8 +1,12 @@
+import time
+from typing import Any
+
 from helpers import query, update, logger
 from escape_helpers import sparql_escape_uri, sparql_escape_string
 from string import Template
 
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
+from decide_ai_service_base.ai_logging import record_llm_call
 from .codelist import CodeListTask
 from ..llm_models.llm_model_clients import create_llm_client
 from ..config import get_config
@@ -59,7 +63,9 @@ class ImpactAssessmentTask(CodeListTask):
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
         config = get_config()
-        self.llm = create_llm_client(config.llm)._chat_model.with_structured_output(ImpactAssessment)
+        self.llm = create_llm_client(config.llm)._chat_model.with_structured_output(
+            ImpactAssessment, include_raw=True
+        )
         self.provider = config.llm.provider
 
     def fetch_eli_expressions(self, target_graph: str) -> list[ProcessItem]:
@@ -206,7 +212,7 @@ class ImpactAssessmentTask(CodeListTask):
             )
         ]
 
-    def _process_single(self, process_item: ProcessItem, policy_label: PolicyLabel) -> ImpactAssessment:
+    def _process_single(self, process_item: ProcessItem, policy_label: PolicyLabel) -> tuple[ImpactAssessment, Any]:
         SYSTEM_PROMPT = """
         You are a policy impact analyst specializing in sustainable development and governance.
 
@@ -232,7 +238,17 @@ class ImpactAssessmentTask(CodeListTask):
                 content=f"Policy text: {process_item.expression_content}\nLabel: {policy_label.policy_label}\n\nProvide a structured impact assessment."),
         ]
 
-        return self.llm.invoke(messages)
+        start = time.monotonic()
+        result, raw_response = self.llm.invoke(messages)
+        elapsed = time.monotonic() - start
+        record_llm_call(
+            self,
+            get_config().llm.base_url,
+            get_agent_uri("impact_annotator"),
+            raw_response,
+            elapsed,
+        )
+        return result, raw_response
 
 
 
@@ -289,7 +305,7 @@ class ImpactAssessmentTask(CodeListTask):
 
         for process_item in self.fetch_eli_expressions(target_graph):
             for policy_label in self.fetch_policy_labels(process_item.expression_uri):
-                assessment = self._process_single(process_item, policy_label)
+                assessment, _raw = self._process_single(process_item, policy_label)
                 self.store(policy_label.annotation_uri, assessment)
                 
                 # Append the input annotation URI to the results' output containers.
