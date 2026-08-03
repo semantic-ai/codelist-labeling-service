@@ -1,3 +1,4 @@
+import time
 import uuid
 from string import Template
 from decide_ai_service_base.sparql_config import AGENT_TYPES, get_prefixes_for_query, TASK_OPERATIONS, GRAPHS
@@ -6,6 +7,7 @@ from decide_ai_service_base.annotation import LinkingAnnotation
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from escape_helpers import sparql_escape_uri, sparql_escape_string
 from decide_ai_service_base.util import get_agent_uri
+from decide_ai_service_base.ai_logging import record_ml_call
 
 from .codelist import CodeListTask
 from ..classifier.predict import predict as classifier_predict
@@ -154,13 +156,29 @@ class ClassifierAnnotatingTask(CodeListTask):
                 logger.warning("Decision %s has no text; skipping.", uri)
                 continue
 
+            start = time.monotonic()
             try:
                 predictions = classifier_predict(
                     text, model, tokenizer, id2label, problem_type, confidence_threshold
                 )
             except Exception as exc:
+                elapsed = time.monotonic() - start
+                record_ml_call(
+                    self,
+                    "local [FAILED]",
+                    get_agent_uri("classifier_annotator"),
+                    elapsed,
+                )
                 logger.error("Inference failed for %s: %s", uri, exc, exc_info=True)
                 continue
+
+            elapsed = time.monotonic() - start
+            record_ml_call(
+                self,
+                "local",
+                get_agent_uri("classifier_annotator"),
+                elapsed,
+            )
 
             if not predictions:
                 continue

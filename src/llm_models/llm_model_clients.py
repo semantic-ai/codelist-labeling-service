@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from typing import Any
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -35,6 +36,23 @@ class LangChainLlmClient:
         response = self._chat_model.invoke(messages)
         raw_text = response.content
         return self._parse_response(raw_text, input.output_format)
+
+    def call_with_raw(self, input: LlmTaskInput) -> tuple[BaseModel, Any]:
+        schema_json = json.dumps(input.output_format.model_json_schema(), indent=2)
+
+        messages = [
+            SystemMessage(content=input.system_message),
+            HumanMessage(content=(
+                f"{input.user_message}\n\n"
+                f"IMPORTANT: You must respond ONLY with valid JSON matching this schema:\n"
+                f"{schema_json}\n"
+                f"Do not include any text before or after the JSON."
+            )),
+        ]
+
+        raw_response = self._chat_model.invoke(messages)
+        parsed = self._parse_response(raw_response.content, input.output_format)
+        return parsed, raw_response
 
     @staticmethod
     def _parse_response(raw_text: str, output_format: type[BaseModel]) -> BaseModel:

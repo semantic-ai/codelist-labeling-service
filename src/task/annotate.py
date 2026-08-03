@@ -6,13 +6,14 @@ import uuid
 from string import Template
 from helpers import query, update, logger
 from escape_helpers import sparql_escape_uri, sparql_escape_string
-import uuid 
+import uuid
 
 from decide_ai_service_base.task import DecisionTask, Task
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AGENT_TYPES, get_prefixes_for_query, \
     GRAPHS
 from decide_ai_service_base.annotation import LinkingAnnotation
 from decide_ai_service_base.util import get_agent_uri
+from decide_ai_service_base.ai_logging import record_llm_call, record_ml_call
 
 from ..llm_models.llm_model_clients import create_llm_client
 from ..llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
@@ -108,12 +109,27 @@ class ModelAnnotatingTask(CodeListTask):
 
 
             for attempt in range(1, max_retries + 1):
+                start = time.monotonic()
                 try:
-                    response = self._llm(llm_input)
-                    classes = response.designated_classes
-                    
+                    parsed, raw_response = self._llm.call_with_raw(llm_input)
+                    classes = parsed.designated_classes
+                    elapsed = time.monotonic() - start
+                    record_llm_call(
+                        self,
+                        config.llm.base_url,
+                        get_agent_uri("model_annotator"),
+                        raw_response,
+                        elapsed,
+                    )
                     break
                 except Exception as exc:
+                    elapsed = time.monotonic() - start
+                    record_ml_call(
+                        self,
+                        config.llm.base_url + " [FAILED]",
+                        get_agent_uri("model_annotator"),
+                        elapsed,
+                    )
                     if attempt == max_retries:
                         raise RuntimeError(f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
                     else:
