@@ -106,10 +106,14 @@ class ModelAnnotatingTask(CodeListTask):
 
         labels_for_prompt = self._codelist_entries.get_labels_with_definitions()
 
-        classes: list[str] = []
+        # Fetch code → expression URI mapping (single action or actieplan members)
+        member_mapping = self.fetch_member_expression_mapping(self.source)
+        action_codes = list(member_mapping.keys())
+
+        classifications: dict[str, list[str]] = {}
         if self._provider == "random":
             logger.warning("Using random label (provider=random).")
-            classes = [random.choice(labels)]
+            classifications = {code: [random.choice(labels)] for code in action_codes}
         elif self._llm is None:
             logger.error("No LLM client available; skipping model annotation.")
             return
@@ -118,36 +122,34 @@ class ModelAnnotatingTask(CodeListTask):
             user_message = self._llm_user_message.format(
                 code_list=labels_for_prompt,
                 decision_text=task_data,
+                action_codes=action_codes,
             )
             llm_input = LlmTaskInput(
                 system_message=self._llm_system_message,
                 user_message=user_message,
                 assistant_message=None,
-                output_format=list[str],
+                output_format=dict[str, list[str]],
             )
             description_count = sum(
                 bool(entry.definition) for entry in self._codelist_entries
             )
             logger.info(
                 "Calling LLM for decision %s "
-                "(text_chars=%d, prompt_chars=%d, codes=%d, descriptions=%d)",
+                "(text_chars=%d, prompt_chars=%d, codes=%d, descriptions=%d, actions=%d)",
                 self.source,
                 len(task_data),
                 len(user_message),
                 len(labels),
                 description_count,
+                len(action_codes),
             )
-
-            # logger.info(
-            #     "LLM input for decision %s:\n%s",
-            #     self.source,
-            #     llm_input.model_dump_json(exclude={"output_format"})
-            # )
-            
 
             for attempt in range(1, max_retries + 1):
                 try:
-                    classes = self._llm(llm_input)
+                    raw_response = self._llm(llm_input)
+                    classifications = self._normalize_llm_response(
+                        raw_response, action_codes
+                    )
                     break
                 except Exception as exc:
                     if attempt == max_retries:
@@ -166,38 +168,56 @@ class ModelAnnotatingTask(CodeListTask):
                     time.sleep(attempt)
 
         logger.info(
-            "Classification completed for decision %s: returned_codes=%s",
+            "Classification completed for decision %s: returned_classifications=%s",
             self.source,
-            classes,
+            classifications,
         )
 
-        for c in classes:
-            concept_uri = self._codelist_entries.resolve_label_to_uri(c, self._label_to_uri)
-            if not concept_uri:
+        any_annotations = False
+        for action_code, class_labels in classifications.items():
+            expression_uri = self._resolve_action_code(action_code, member_mapping)
+            if not expression_uri:
                 logger.warning(
-                    "No concept URI found for returned code %r on decision %s; "
-                    "skipping annotation.",
-                    c,
+                    "No expression URI found for action code %r on decision %s; "
+                    "skipping.",
+                    action_code,
                     self.source,
                 )
                 continue
 
-            annotation = LinkingAnnotation(
-                self.task_uri,
-                self.source,
-                concept_uri,
-                get_agent_uri("model_annotator"),
-                AGENT_TYPES["ai_component"]
-            )
-            annotation.add_to_triplestore_if_not_exists()
-            logger.info(
-                "Stored model annotation for decision %s: code=%s, concept=%s",
-                self.source,
-                c,
-                concept_uri,
-            )
+            for c in class_labels:
+                concept_uri = self._codelist_entries.resolve_label_to_uri(c, self._label_to_uri)
+                if not concept_uri:
+                    logger.warning(
+                        "No concept URI found for returned code %r (action %r) on decision %s; "
+                        "skipping annotation.",
+                        c,
+                        action_code,
+                        self.source,
+                    )
+                    continue
 
-        if classes:
+                annotation = LinkingAnnotation(
+                    self.task_uri,
+                    expression_uri,
+                    concept_uri,
+                    get_agent_uri("model_annotator"),
+                    AGENT_TYPES["ai_component"]
+                )
+                annotation.add_to_triplestore_if_not_exists()
+                any_annotations = True
+                logger.info(
+                    "Stored model annotation for decision %s, action %s: code=%s, concept=%s",
+                    self.source,
+                    action_code,
+                    c,
+                    concept_uri,
+                )
+
+            if not class_labels:
+                self._store_no_match_for_expression(expression_uri)
+
+        if any_annotations:
             self.results_container_uris.append(self.create_output_container(self.source))
         else:
             self.store_no_match()
@@ -210,6 +230,106 @@ class ModelAnnotatingTask(CodeListTask):
                 rate_limit_delay,
             )
             time.sleep(rate_limit_delay)
+
+    @staticmethod
+    def _normalize_llm_response(
+        raw_response: dict[str, list[str]] | list[str],
+        action_codes: list[str],
+    ) -> dict[str, list[str]]:
+        """Normalize LLM response into a code → labels dict.
+
+        Handles:
+        - Correct dict[str, list[str]] responses
+        - Flat list[str] fallback (assigns all labels to first action code)
+        - Whitespace/case normalization on keys
+        - Keys that don't match action_codes (attempts fuzzy match)
+        """
+        # Handle flat list fallback (LLM ignored structure instruction)
+        if isinstance(raw_response, list):
+            logger.warning(
+                "LLM returned flat list instead of dict; assigning all labels "
+                "to first action code %r.",
+                action_codes[0] if action_codes else "?",
+            )
+            if action_codes:
+                return {action_codes[0]: raw_response}
+            return {}
+
+        if not isinstance(raw_response, dict):
+            logger.warning("LLM returned unexpected type %s; treating as empty.", type(raw_response))
+            return {}
+
+        # Build case-insensitive lookup for action codes
+        code_lookup = {code.strip().lower(): code for code in action_codes}
+
+        normalized: dict[str, list[str]] = {}
+        for key, labels in raw_response.items():
+            normalized_key = key.strip()
+            # Exact match first
+            if normalized_key in action_codes:
+                resolved_key = normalized_key
+            else:
+                # Case-insensitive match
+                resolved_key = code_lookup.get(normalized_key.lower())
+
+            if not resolved_key:
+                logger.warning(
+                    "LLM returned unknown action code %r; attempting prefix match.",
+                    key,
+                )
+                # Try prefix match
+                lower_key = normalized_key.lower()
+                for ac in action_codes:
+                    if ac.lower().startswith(lower_key) or lower_key.startswith(ac.lower()):
+                        resolved_key = ac
+                        break
+
+            if resolved_key:
+                # Ensure labels is a list of strings
+                if isinstance(labels, str):
+                    labels = [labels]
+                elif not isinstance(labels, list):
+                    labels = []
+                normalized[resolved_key] = [str(l).strip() for l in labels if l]
+            else:
+                logger.warning(
+                    "Could not resolve LLM action code %r to any known action; skipping.",
+                    key,
+                )
+
+        return normalized
+
+    @staticmethod
+    def _resolve_action_code(
+        action_code: str, member_mapping: dict[str, str]
+    ) -> str | None:
+        """Resolve an action code to its expression URI with fallback matching."""
+        # Exact match
+        if action_code in member_mapping:
+            return member_mapping[action_code]
+
+        # Case-insensitive
+        lower_code = action_code.strip().lower()
+        for code, uri in member_mapping.items():
+            if code.lower() == lower_code:
+                return uri
+
+        return None
+
+    def _store_no_match_for_expression(self, expression_uri: str):
+        """Store a no-match-found annotation for a specific expression."""
+        uri = "http://mu.semte.ch/vocabularies/ext/no-match-found"
+        try:
+            annotation = LinkingAnnotation(
+                self.task_uri,
+                expression_uri,
+                uri,
+                get_agent_uri("model_annotator"),
+                AGENT_TYPES["ai_component"]
+            )
+            annotation.add_to_triplestore_if_not_exists()
+        except Exception as e:
+            logger.error("Failed to insert no-match-found for %s: %s", expression_uri, e)
     
     def store_no_match(self):
         uri = f"http://mu.semte.ch/vocabularies/ext/no-match-found"

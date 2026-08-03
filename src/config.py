@@ -113,9 +113,30 @@ class CodelistPromptConfig(BaseModel):
         description="System message for the LLM"
     )
     user_message: str = Field(
-        description="User message template with {code_list} and {decision_text} placeholders"
+        description="User message template with {code_list}, {decision_text}, and {action_codes} placeholders"
     )
 
+
+DEFAULT_USER_MESSAGE_PER_ACTION = (
+    "Determine the best matching codes from the following list for EACH action in the given decision text.\n\n"
+    '"""'
+    "CODE LIST:\n"
+    "{code_list}\n"
+    '"""\n\n'
+    '"""'
+    "ACTION CODES:\n"
+    "{action_codes}\n"
+    '"""\n\n'
+    '"""'
+    "DECISION TEXT:\n"
+    "{decision_text}\n"
+    '"""'
+    "For EACH action code listed above, provide the matching taxonomy codes from the code list. "
+    "Return a JSON object where each key is an action code and the value is a list of matching codes. "
+    "Only include codes that are truly matching and only from the given code list! "
+    "If none of the codes match for an action, use an empty list for that action. "
+    'Example format: {{"ACT-1": ["Code A", "Code B"], "ACT-2": []}}'
+)
 
 DEFAULT_SYSTEM_MESSAGE = (
     "You are a juridical and administrative assistant that must determine "

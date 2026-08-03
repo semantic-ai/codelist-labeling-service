@@ -5,6 +5,7 @@ from decide_ai_service_base.task import DecisionTask
 from pydantic import BaseModel, Field
 from helpers import query, logger
 from escape_helpers import sparql_escape_uri
+from decide_ai_service_base.sparql_config import get_prefixes_for_query
 
 
 
@@ -369,3 +370,60 @@ class CodeListTask(DecisionTask, ABC):
         uri = result["value"]
         
         return uri
+
+    def fetch_member_expression_mapping(self, source_uri: str) -> dict[str, str]:
+        """Fetch a mapping of action code → expression URI for member expressions.
+
+        For a single action (no members), returns {own_code: own_uri}.
+        For an actieplan, returns {member_code: member_expression_uri} for each member.
+
+        Returns:
+            dict mapping code strings to expression URIs.
+        """
+        q = Template(
+            get_prefixes_for_query("eli", "schema") +
+            """
+            SELECT ?code ?memberExpr WHERE {
+                GRAPH ?graph {
+                    ?work eli:is_realized_by $source ;
+                          eli:has_member ?memberWork .
+                    ?memberWork eli:is_realized_by ?memberExpr .
+                    ?memberExpr a eli:Expression .
+                    ?memberExpr schema:code ?code .
+                }
+            }
+            """
+        ).substitute(source=sparql_escape_uri(source_uri))
+
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+
+        if bindings:
+            return {
+                b["code"]["value"]: b["memberExpr"]["value"]
+                for b in bindings
+                if "code" in b and "memberExpr" in b
+            }
+
+        # No members — single action, return self-mapping with own code
+        q_self = Template(
+            get_prefixes_for_query("schema") +
+            """
+            SELECT ?code WHERE {
+                GRAPH ?graph {
+                    $source schema:code ?code .
+                }
+            }
+            """
+        ).substitute(source=sparql_escape_uri(source_uri))
+
+        res_self = query(q_self, sudo=True)
+        self_bindings = res_self.get("results", {}).get("bindings", [])
+
+        if self_bindings:
+            code = self_bindings[0]["code"]["value"]
+            return {code: source_uri}
+
+        # Fallback: no code found, use URI fragment as key
+        fallback_key = source_uri.rsplit("/", 1)[-1]
+        return {fallback_key: source_uri}
