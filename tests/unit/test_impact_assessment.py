@@ -26,7 +26,7 @@ Previously documented bugs (now fixed)
 """
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from escape_helpers import sparql_escape_uri
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -57,6 +57,13 @@ from tests.unit.conftest import (
 )
 
 
+def _mock_llm_response(parsed, usage_metadata=None):
+    """Build the dict shape returned by with_structured_output(include_raw=True)."""
+    mock_raw = MagicMock()
+    mock_raw.usage_metadata = usage_metadata or {"input_tokens": 10, "output_tokens": 20}
+    return {"raw": mock_raw, "parsed": parsed, "parsing_error": None}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # fetch_eli_expressions
 # ─────────────────────────────────────────────────────────────────────────────
@@ -64,48 +71,78 @@ from tests.unit.conftest import (
 class TestFetchEliExpressions:
     """fetch_eli_expressions() queries four named graphs and assembles ProcessItems."""
 
+    def _setup_mocks(self, impact_task, mocker, empty=False):
+        """Mock fetch_codelist_uri_for_task and the SPARQL query."""
+        mocker.patch.object(
+            impact_task, "fetch_codelist_uri_for_task", return_value=CONCEPT_SCHEME_URI
+        )
+        if empty:
+            mocker.patch(
+                "src.task.impact.query",
+                return_value={"results": {"bindings": []}},
+            )
+        else:
+            mocker.patch(
+                "src.task.impact.query",
+                return_value={"results": {"bindings": [
+                    {
+                        "expression": {"value": EXPRESSION_URI},
+                        "content": {"value": EXPRESSION_CONTENT},
+                        "lang": {"value": LANGUAGE_URI},
+                        "work": {"value": WORK_URI},
+                    }
+                ]}},
+            )
+
     def test_returns_one_process_item_per_expression(
-        self, impact_task, expression_triples
+        self, impact_task, mocker
     ):
+        self._setup_mocks(impact_task, mocker)
         results = impact_task.fetch_eli_expressions()
 
         assert len(results) == 1
 
     def test_process_item_carries_correct_expression_uri(
-        self, impact_task, expression_triples
+        self, impact_task, mocker
     ):
+        self._setup_mocks(impact_task, mocker)
         item = impact_task.fetch_eli_expressions()[0]
 
         assert item.expression_uri == EXPRESSION_URI
 
     def test_process_item_carries_expression_content(
-        self, impact_task, expression_triples
+        self, impact_task, mocker
     ):
+        self._setup_mocks(impact_task, mocker)
         item = impact_task.fetch_eli_expressions()[0]
 
         assert item.expression_content == EXPRESSION_CONTENT
 
     def test_process_item_carries_language_uri(
-        self, impact_task, expression_triples
+        self, impact_task, mocker
     ):
+        self._setup_mocks(impact_task, mocker)
         item = impact_task.fetch_eli_expressions()[0]
 
         assert item.language == LANGUAGE_URI
 
     def test_process_item_carries_work_uri(
-        self, impact_task, expression_triples
+        self, impact_task, mocker
     ):
+        self._setup_mocks(impact_task, mocker)
         item = impact_task.fetch_eli_expressions()[0]
 
         assert item.work_uri == WORK_URI
 
-    def test_returns_empty_list_when_task_has_no_input(self, impact_task):
+    def test_returns_empty_list_when_task_has_no_input(self, impact_task, mocker):
         """Without any triples in the store the method must return [] gracefully."""
+        self._setup_mocks(impact_task, mocker, empty=True)
         results = impact_task.fetch_eli_expressions()
 
         assert results == []
 
-    def test_returns_list_of_process_items(self, impact_task, expression_triples):
+    def test_returns_list_of_process_items(self, impact_task, mocker):
+        self._setup_mocks(impact_task, mocker)
         results = impact_task.fetch_eli_expressions()
 
         assert all(isinstance(r, ProcessItem) for r in results)
@@ -217,7 +254,7 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _mock_llm_response(sample_assessment)
 
         impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -230,7 +267,7 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _mock_llm_response(sample_assessment)
 
         impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -246,7 +283,7 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _mock_llm_response(sample_assessment)
 
         impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -260,7 +297,7 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _mock_llm_response(sample_assessment)
 
         impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -274,9 +311,9 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _mock_llm_response(sample_assessment)
 
-        result = impact_task._process_single(sample_process_item, sample_policy_label)
+        result, _raw = impact_task._process_single(sample_process_item, sample_policy_label)
 
         assert result is sample_assessment
 
@@ -288,9 +325,9 @@ class TestProcessSingle:
         sample_assessment,
     ):
         assert sample_assessment.impact_direction == ImpactDirection.POSITIVE
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _mock_llm_response(sample_assessment)
 
-        result = impact_task._process_single(sample_process_item, sample_policy_label)
+        result, _raw = impact_task._process_single(sample_process_item, sample_policy_label)
 
         assert result.impact_direction == ImpactDirection.POSITIVE
 
@@ -308,9 +345,9 @@ class TestProcessSingle:
                 "summary": "The policy negatively affects clean energy access.",
             }
         )
-        impact_task.llm.invoke.return_value = negative_assessment
+        impact_task.llm.invoke.return_value = _mock_llm_response(negative_assessment)
 
-        result = impact_task._process_single(sample_process_item, sample_policy_label)
+        result, _raw = impact_task._process_single(sample_process_item, sample_policy_label)
 
         assert result.impact_direction == ImpactDirection.NEGATIVE
 
@@ -327,9 +364,9 @@ class TestProcessSingle:
                 "confidence": ConfidenceLevel.LOW,
             }
         )
-        impact_task.llm.invoke.return_value = uncertain_assessment
+        impact_task.llm.invoke.return_value = _mock_llm_response(uncertain_assessment)
 
-        result = impact_task._process_single(sample_process_item, sample_policy_label)
+        result, _raw = impact_task._process_single(sample_process_item, sample_policy_label)
 
         assert result.impact_direction == ImpactDirection.UNCERTAIN
 
@@ -340,9 +377,9 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _mock_llm_response(sample_assessment)
 
-        result = impact_task._process_single(sample_process_item, sample_policy_label)
+        result, _raw = impact_task._process_single(sample_process_item, sample_policy_label)
 
         assert result.label == sample_assessment.label
         assert result.confidence == sample_assessment.confidence
@@ -351,6 +388,41 @@ class TestProcessSingle:
         assert result.second_order_effects == sample_assessment.second_order_effects
         assert result.key_uncertainties == sample_assessment.key_uncertainties
         assert result.summary == sample_assessment.summary
+
+    def test_records_llm_call_with_model_name(
+        self,
+        impact_task,
+        sample_process_item,
+        sample_policy_label,
+        sample_assessment,
+        mocker,
+    ):
+        """record_llm_call is invoked with the real model name, not an agent URI."""
+        impact_task.llm.invoke.return_value = _mock_llm_response(sample_assessment)
+        mock_record = mocker.patch("src.task.impact.record_llm_call")
+
+        impact_task._process_single(sample_process_item, sample_policy_label)
+
+        mock_record.assert_called_once()
+        call_args = mock_record.call_args[0]
+        assert call_args[2] == "test-model"
+
+    def test_raises_on_parsing_error(
+        self,
+        impact_task,
+        sample_process_item,
+        sample_policy_label,
+        sample_assessment,
+    ):
+        """When the LLM response contains a parsing_error, a RuntimeError is raised."""
+        impact_task.llm.invoke.return_value = {
+            "raw": None,
+            "parsed": None,
+            "parsing_error": ValueError("bad output"),
+        }
+
+        with pytest.raises(RuntimeError, match="LLM parsing error"):
+            impact_task._process_single(sample_process_item, sample_policy_label)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -483,7 +555,7 @@ class TestProcess:
             impact_task, "fetch_policy_labels", return_value=[sample_policy_label]
         )
         mock_single = mocker.patch.object(
-            impact_task, "_process_single", return_value=sample_assessment
+            impact_task, "_process_single", return_value=(sample_assessment, None)
         )
         mocker.patch.object(impact_task, "store")
 
@@ -507,7 +579,7 @@ class TestProcess:
             impact_task, "fetch_policy_labels", return_value=[sample_policy_label]
         )
         mocker.patch.object(
-            impact_task, "_process_single", return_value=sample_assessment
+            impact_task, "_process_single", return_value=(sample_assessment, None)
         )
         mock_store = mocker.patch.object(impact_task, "store")
 

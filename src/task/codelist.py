@@ -42,7 +42,10 @@ class Codelist(list[CodelistEntry]):
         bindings = response.get("results", {}).get("bindings", [])
 
         if not bindings:
-            raise RuntimeError(f"No concepts found for concept scheme {concept_scheme_uri}")
+            logger.warning("No concepts found for concept scheme %s", concept_scheme_uri)
+            empty = cls([])
+            empty.concept_scheme_uri = concept_scheme_uri
+            return empty
 
         entries = [
             CodelistEntry(

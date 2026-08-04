@@ -128,8 +128,9 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """A single matching label returned by the LLM produces one annotation."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy"]
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=["Affordable and Clean Energy"]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
         )
 
         annotating_task.process()
@@ -149,8 +150,9 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """Two matching labels produce two separate annotations."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy", "Climate Action"]
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=["Affordable and Clean Energy", "Climate Action"]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
         )
 
         annotating_task.process()
@@ -162,8 +164,9 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """The oa:hasTarget of every inserted annotation is the task's source URI."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy"]
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=["Affordable and Clean Energy"]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
         )
 
         annotating_task.process()
@@ -180,8 +183,9 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """The oa:hasBody of the annotation is the resolved SKOS concept URI."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Climate Action"]
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=["Climate Action"]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
         )
 
         annotating_task.process()
@@ -199,8 +203,9 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """Calling process() twice produces exactly one annotation (idempotent guard)."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy"]
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=["Affordable and Clean Energy"]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
         )
 
         annotating_task.process()
@@ -254,8 +259,9 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """A label not present in the codelist is silently ignored."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Unknown SDG Goal 99"]
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=["Unknown SDG Goal 99"]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
         )
 
         annotating_task.process()
@@ -265,43 +271,40 @@ class TestModelAnnotatingTaskProcess:
     def test_skips_annotation_when_llm_returns_empty_list(
         self, annotating_task, expression_content_triple
     ):
-        """An empty designated_classes list results in zero annotations."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=[]
+        """An empty designated_classes list creates a no-match annotation."""
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=[]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
         )
 
         annotating_task.process()
 
-        assert sparql_count_annotations(EXPRESSION_URI) == 0
+        assert sparql_count_annotations(EXPRESSION_URI) == 1
 
-    def test_falls_back_to_random_label_when_llm_raises(
+    def test_raises_when_llm_fails_after_retries(
         self, annotating_task, expression_content_triple
     ):
-        """
-        When the LLM call raises an exception, process() falls back to a
-        randomly selected label from the codelist and still inserts one
-        annotation.
-        """
-        annotating_task._llm.side_effect = RuntimeError("LLM unavailable")
+        """When the LLM call raises an exception, process() raises after max_retries."""
+        annotating_task._llm.call_with_raw.side_effect = RuntimeError("LLM unavailable")
 
-        annotating_task.process()
+        with pytest.raises(RuntimeError, match="LLM call failed after 3 attempts"):
+            annotating_task.process()
 
-        # Exactly one annotation with some concept from the codelist
-        count = sparql_count_annotations(EXPRESSION_URI)
-        assert count == 1
+        assert sparql_count_annotations(EXPRESSION_URI) == 0
 
     def test_llm_receives_codelist_labels_in_user_message(
         self, annotating_task, expression_content_triple
     ):
         """The user message passed to the LLM contains the codelist labels."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=[]
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=[]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
         )
 
         annotating_task.process()
 
-        annotating_task._llm.assert_called_once()
-        llm_input = annotating_task._llm.call_args[0][0]
+        annotating_task._llm.call_with_raw.assert_called_once()
+        llm_input = annotating_task._llm.call_with_raw.call_args[0][0]
         assert "Affordable and Clean Energy" in llm_input.user_message
         assert "Climate Action" in llm_input.user_message
 
@@ -309,14 +312,31 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """The user message passed to the LLM contains the fetched expression text."""
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=[]
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=[]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
         )
 
         annotating_task.process()
 
-        llm_input = annotating_task._llm.call_args[0][0]
+        llm_input = annotating_task._llm.call_with_raw.call_args[0][0]
         assert EXPRESSION_CONTENT in llm_input.user_message
+
+    def test_records_llm_call_with_model_name(
+        self, annotating_task, expression_content_triple, mocker
+    ):
+        """record_llm_call is invoked with the real model name, not an agent URI."""
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=["Affordable and Clean Energy"]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
+        )
+        mock_record = mocker.patch("src.task.annotate.record_llm_call")
+
+        annotating_task.process()
+
+        mock_record.assert_called_once()
+        call_args = mock_record.call_args[0]
+        assert call_args[2] == "test-model"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -329,7 +349,7 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """Both expressions appear when neither has an annotation."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI
         )
 
@@ -340,7 +360,7 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, one_annotated_one_plain_expression
     ):
         """Only the expression without an annotation is returned."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI
         )
 
@@ -351,16 +371,20 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, two_annotated_expressions
     ):
         """Neither expression is returned when both have classifying annotations."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI
         )
 
         assert EXPRESSION_URI not in result
         assert EXPRESSION_URI_2 not in result
 
-    def test_returns_empty_list_when_no_expressions(self, batch_task):
+    def test_returns_empty_list_when_no_expressions(self, batch_task, mocker):
         """Returns an empty list when no eli:Expression triples exist."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        mocker.patch.object(
+            batch_task, "get_expressions_in_task_filter",
+            return_value='VALUES ?s { <http://test.example.org/nonexistent> }',
+        )
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI
         )
 
@@ -370,7 +394,7 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """Every returned value is a plain string (the expression URI)."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI
         )
 
@@ -395,7 +419,7 @@ class TestFetchDecisionsWithoutAnnotations:
             }}
         """)
 
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI
         )
 
@@ -405,7 +429,7 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """When sh:targetNode is used, only the specified nodes are returned."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
             target_nodes=[EXPRESSION_URI],
         )
@@ -417,7 +441,7 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """When sh:targetClass is used, all instances of that class are returned."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
             target_classes=["http://data.europa.eu/eli/ontology#Expression"],
         )
@@ -426,10 +450,17 @@ class TestFetchDecisionsWithoutAnnotations:
         assert EXPRESSION_URI_2 in result
 
     def test_filters_by_target_node_and_class(
-        self, batch_task, unannotated_expressions
+        self, batch_task, mocker
     ):
         """When both sh:targetNode and sh:targetClass are used, results are the union."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        mocker.patch(
+            "src.task.annotate.query",
+            return_value={"results": {"bindings": [
+                {"s": {"value": EXPRESSION_URI}},
+                {"s": {"value": EXPRESSION_URI_2}},
+            ]}},
+        )
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
             target_nodes=[EXPRESSION_URI],
             target_classes=["http://data.europa.eu/eli/ontology#Expression"],
@@ -442,7 +473,7 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """Without shape targets, defaults to eli:Expression (same as test_returns_unannotated_expression)."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
         )
 
@@ -623,18 +654,26 @@ class TestModelBatchAnnotatingTaskProcess:
 class TestFetchTextWithPropertyPath:
 
     def test_fetches_text_using_configured_property(
-        self, annotating_task, expression_content_triple
+        self, annotating_task, mocker
     ):
         """fetch_text_with_property_path() returns the text stored under the given property."""
         epvoc_content = "https://data.europarl.europa.eu/def/epvoc#expressionContent"
+        mocker.patch(
+            "src.task.annotate.query",
+            return_value={"results": {"bindings": [{"text": {"value": EXPRESSION_CONTENT}}]}},
+        )
         result = annotating_task.fetch_text_with_property_path(epvoc_content)
 
         assert EXPRESSION_CONTENT in result
 
     def test_returns_empty_string_when_property_not_present(
-        self, annotating_task, expression_content_triple
+        self, annotating_task, mocker
     ):
         """Returns empty string when the property does not exist on the resource."""
+        mocker.patch(
+            "src.task.annotate.query",
+            return_value={"results": {"bindings": []}},
+        )
         result = annotating_task.fetch_text_with_property_path(
             "http://example.org/nonexistent-property"
         )
@@ -642,13 +681,18 @@ class TestFetchTextWithPropertyPath:
         assert result == ""
 
     def test_process_uses_property_path_when_set(
-        self, annotating_task, expression_content_triple
+        self, annotating_task, mocker
     ):
         """process() uses fetch_text_with_property_path when _property_path_for_text is set."""
         epvoc_content = "https://data.europarl.europa.eu/def/epvoc#expressionContent"
         annotating_task._property_path_for_text = epvoc_content
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy"]
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=["Affordable and Clean Energy"]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
+        )
+        mocker.patch(
+            "src.task.annotate.query",
+            return_value={"results": {"bindings": [{"text": {"value": EXPRESSION_CONTENT}}]}},
         )
 
         annotating_task.process()
@@ -660,8 +704,9 @@ class TestFetchTextWithPropertyPath:
     ):
         """process() falls back to fetch_data() when _property_path_for_text is None."""
         annotating_task._property_path_for_text = None
-        annotating_task._llm.return_value = EntityLinkingTaskOutput(
-            designated_classes=["Affordable and Clean Energy"]
+        annotating_task._llm.call_with_raw.return_value = (
+            EntityLinkingTaskOutput(designated_classes=["Affordable and Clean Energy"]),
+            MagicMock(usage_metadata={"input_tokens": 10, "output_tokens": 20}),
         )
 
         annotating_task.process()

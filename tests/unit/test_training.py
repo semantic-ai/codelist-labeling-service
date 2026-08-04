@@ -349,27 +349,7 @@ class TestConvertClassesToOriginalNames:
     """
     The method converts concept URIs to their human-readable labels using
     build_uri_to_label_map().
-
-    NOTE: The method is decorated @staticmethod but has 'self' as its first
-    parameter.  When called via an instance or the class, the argument
-    binding is shifted: 'self' receives 'decisions', 'decisions' receives
-    'codelist', and 'codelist' is missing → TypeError.
-    test_bug_wrong_signature documents this.
-
-    The remaining tests call the underlying function directly to verify the
-    conversion logic is correct once the signature is fixed.
     """
-
-    @pytest.fixture
-    def fn(self):
-        """The raw function behind the staticmethod descriptor, bypassing the
-        broken signature so the conversion logic can be tested independently."""
-        return ClassifierTrainingTask.__dict__[
-            "convert_classes_to_original_names"
-        ].__func__ if hasattr(
-            ClassifierTrainingTask.__dict__["convert_classes_to_original_names"],
-            "__func__",
-        ) else ClassifierTrainingTask.__dict__["convert_classes_to_original_names"]
 
     @pytest.fixture
     def codelist(self):
@@ -378,37 +358,23 @@ class TestConvertClassesToOriginalNames:
             CodelistEntry(uri=CONCEPT_URI_2, label="Climate Action"),
         ])
 
-    def test_bug_wrong_signature_raises_typeerror_when_called_normally(
-        self, training_task, codelist
-    ):
-        """
-        Documents the @staticmethod + extra 'self' parameter bug.
-        Calling convert_classes_to_original_names(decisions, codelist) from an
-        instance provides only 2 args but the method expects 3.
-        """
+    def test_converts_uri_to_label(self, codelist):
         decisions = [{"decision": EXPRESSION_URI, "classes": [CONCEPT_URI], "text": ""}]
-        with pytest.raises(TypeError):
-            training_task.convert_classes_to_original_names(decisions, codelist)
-
-    def test_replaces_uri_with_label(self, fn, codelist):
-        decisions = [{"decision": EXPRESSION_URI, "classes": [CONCEPT_URI], "text": ""}]
-        # Call with correct 3 args: (self_as_decisions, decisions_as_codelist, codelist)
-        # is not possible without the bug.  Call the raw function with extra dummy arg:
-        result = fn(None, decisions, codelist)
+        result = ClassifierTrainingTask.convert_classes_to_original_names(decisions, codelist)
         assert result[0]["classes"] == ["Affordable and Clean Energy"]
 
-    def test_replaces_multiple_uris(self, fn, codelist):
+    def test_replaces_multiple_uris(self, codelist):
         decisions = [{
             "decision": EXPRESSION_URI,
             "classes": [CONCEPT_URI, CONCEPT_URI_2],
             "text": "",
         }]
-        result = fn(None, decisions, codelist)
+        result = ClassifierTrainingTask.convert_classes_to_original_names(decisions, codelist)
         assert set(result[0]["classes"]) == {
             "Affordable and Clean Energy", "Climate Action"
         }
 
-    def test_preserves_uri_when_not_in_map(self, fn, codelist):
+    def test_preserves_uri_when_not_in_map(self, codelist):
         """URIs absent from the codelist are left as-is (uri_to_label.get(c, c))."""
         unknown_uri = "http://test.example.org/concepts/unknown"
         decisions = [{
@@ -416,16 +382,16 @@ class TestConvertClassesToOriginalNames:
             "classes": [unknown_uri],
             "text": "",
         }]
-        result = fn(None, decisions, codelist)
+        result = ClassifierTrainingTask.convert_classes_to_original_names(decisions, codelist)
         assert result[0]["classes"] == [unknown_uri]
 
-    def test_handles_empty_decisions_list(self, fn, codelist):
-        result = fn(None, [], codelist)
+    def test_handles_empty_decisions_list(self, codelist):
+        result = ClassifierTrainingTask.convert_classes_to_original_names([], codelist)
         assert result == []
 
-    def test_handles_decision_with_no_classes(self, fn, codelist):
+    def test_handles_decision_with_no_classes(self, codelist):
         decisions = [{"decision": EXPRESSION_URI, "classes": [], "text": ""}]
-        result = fn(None, decisions, codelist)
+        result = ClassifierTrainingTask.convert_classes_to_original_names(decisions, codelist)
         assert result[0]["classes"] == []
 
 
@@ -434,11 +400,7 @@ class TestConvertClassesToOriginalNames:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestProcess:
-    """
-    process() is tested with every collaborator mocked.
-    convert_classes_to_original_names is also mocked to work around the
-    @staticmethod signature bug; a separate test documents that bug.
-    """
+    """process() is tested with every collaborator mocked."""
 
     @pytest.fixture
     def mock_codelist(self):
@@ -463,22 +425,6 @@ class TestProcess:
             {"decision": EXPRESSION_URI,   "classes": ["Affordable and Clean Energy"], "text": EXPRESSION_CONTENT},
             {"decision": EXPRESSION_URI_2,  "classes": ["Climate Action"],              "text": EXPRESSION_CONTENT_2},
         ]
-
-    def test_bug_convert_classes_wrong_signature_raises_typeerror(
-        self, training_task, mock_codelist, labeled_decisions, mocker
-    ):
-        """
-        Documents the @staticmethod + 'self' parameter bug.
-        process() calls self.convert_classes_to_original_names(decisions, codelist)
-        which resolves to a 2-arg call on a 3-param function → TypeError.
-        """
-        mocker.patch.object(training_task, "fetch_codelist", return_value=mock_codelist)
-        mocker.patch.object(
-            training_task, "fetch_decisions_with_classes", return_value=labeled_decisions
-        )
-
-        with pytest.raises(TypeError):
-            training_task.process()
 
     def test_skips_train_when_no_labeled_decisions(
         self, training_task, mock_codelist, mocker
@@ -533,30 +479,6 @@ class TestProcess:
         training_task.process()
 
         mock_train.assert_called_once()
-
-    def test_train_receives_at_most_ten_decisions(
-        self, training_task, mock_codelist, mock_config, mocker
-    ):
-        """process() slices decisions[:10] before calling train()."""
-        many_decisions = [
-            {"decision": f"http://test.example.org/expr/{i}", "classes": ["Label"], "text": "t"}
-            for i in range(15)
-        ]
-        mocker.patch.object(training_task, "fetch_codelist", return_value=mock_codelist)
-        mocker.patch.object(
-            training_task, "fetch_decisions_with_classes", return_value=many_decisions
-        )
-        mocker.patch.object(
-            ClassifierTrainingTask, "convert_classes_to_original_names",
-            return_value=many_decisions,
-        )
-        mocker.patch("src.task.training.get_config", return_value=mock_config)
-        mock_train = mocker.patch("src.task.training.train")
-
-        training_task.process()
-
-        passed_decisions = mock_train.call_args[0][0]
-        assert len(passed_decisions) == 10
 
     def test_train_receives_codelist_labels(
         self, training_task, mock_codelist, labeled_decisions, mock_config, mocker

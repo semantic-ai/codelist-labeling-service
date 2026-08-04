@@ -65,6 +65,7 @@ NS = {
     "skos": "http://www.w3.org/2004/02/skos/core#",
     "ext": "http://mu.semte.ch/vocabularies/ext/",
     "prov": "http://www.w3.org/ns/prov#",
+    "dct": "http://purl.org/dc/terms/",
 }
 
 # All named graphs that tests write to – used by the isolation fixture
@@ -166,6 +167,16 @@ def _wipe_test_data() -> None:
         )
 
 
+@pytest.fixture(autouse=True)
+def mock_agent_uri(mocker):
+    """Mock get_agent_uri so tests don't require write_agent_info at startup."""
+    def _fake(suffix):
+        return f"http://test.example.org/agents/{suffix}"
+    mocker.patch("src.task.annotate.get_agent_uri", side_effect=_fake)
+    mocker.patch("src.task.impact.get_agent_uri", side_effect=_fake)
+    mocker.patch("src.task.classify.get_agent_uri", side_effect=_fake)
+
+
 # ---------------------------------------------------------------------------
 # ImpactAssessmentOutput – re-declaration of the Pydantic output schema
 #
@@ -258,6 +269,8 @@ def impact_task() -> ImpactAssessmentTask:
     task.source_graph = None
     task.results_container_uris = []
     task.provider = "ollama"
+    task._model_name = "test-model"
+    task._endpoint = "http://ollama:11434"
     task.llm = MagicMock()
     return task
 
@@ -281,6 +294,8 @@ def expression_triples():
         INSERT DATA {{
             GRAPH {sparql_escape_uri(GRAPHS["jobs"])} {{
                 {sparql_escape_uri(TASK_URI)} {sparql_escape_uri(NS["task"] + "inputContainer")} {sparql_escape_uri(CONTAINER_URI)} .
+                {sparql_escape_uri(TASK_URI)} {sparql_escape_uri(NS["dct"] + "isPartOf")} {sparql_escape_uri(JOB_URI)} .
+                {sparql_escape_uri(JOB_URI)} {sparql_escape_uri(NS["ext"] + "codelist")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
             }}
             GRAPH {sparql_escape_uri(GRAPHS["data_containers"])} {{
                 {sparql_escape_uri(CONTAINER_URI)} {sparql_escape_uri(NS["task"] + "hasResource")} {sparql_escape_uri(EXPRESSION_URI)} .
@@ -295,6 +310,18 @@ def expression_triples():
                 {sparql_escape_uri(WORK_URI)}
                     a {sparql_escape_uri(NS["eli"] + "Work")} ;
                     {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(EXPRESSION_URI)} .
+            }}
+            GRAPH {sparql_escape_uri(GRAPHS["ai"])} {{
+                {sparql_escape_uri(ANNOTATION_URI)}
+                    a {sparql_escape_uri(NS["oa"] + "Annotation")} ;
+                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(EXPRESSION_URI)} ;
+                    {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI)} .
+            }}
+            GRAPH {sparql_escape_uri(GRAPHS["public"])} {{
+                {sparql_escape_uri(CONCEPT_URI)}
+                    a {sparql_escape_uri(NS["skos"] + "Concept")} ;
+                    {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
             }}
         }}
     """)
