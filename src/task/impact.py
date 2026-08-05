@@ -9,6 +9,7 @@ from decide_ai_service_base.sparql_config import TASK_OPERATIONS, GRAPHS, get_pr
 from decide_ai_service_base.ai_logging import record_llm_call
 from .codelist import CodeListTask
 from ..llm_models.llm_model_clients import create_llm_client
+from ..config import get_config
 from langchain_core.messages import HumanMessage, SystemMessage
 from decide_ai_service_base.util import get_agent_uri
 
