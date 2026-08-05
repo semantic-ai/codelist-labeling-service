@@ -162,13 +162,6 @@ class ClassifierAnnotatingTask(CodeListTask):
                     text, model, tokenizer, id2label, problem_type, confidence_threshold
                 )
             except Exception as exc:
-                elapsed = time.monotonic() - start
-                record_ml_call(
-                    self,
-                    "local [FAILED]",
-                    get_agent_uri("classifier_annotator"),
-                    elapsed,
-                )
                 logger.error("Inference failed for %s: %s", uri, exc, exc_info=True)
                 continue
 
@@ -176,7 +169,7 @@ class ClassifierAnnotatingTask(CodeListTask):
             record_ml_call(
                 self,
                 "local",
-                get_agent_uri("classifier_annotator"),
+                inference_cfg.huggingface_model_id,
                 elapsed,
             )
 

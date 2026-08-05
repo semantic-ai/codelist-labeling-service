@@ -13,7 +13,7 @@ from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AGENT_TYPES, g
     GRAPHS
 from decide_ai_service_base.annotation import LinkingAnnotation
 from decide_ai_service_base.util import get_agent_uri
-from decide_ai_service_base.ai_logging import record_llm_call, record_ml_call
+from decide_ai_service_base.ai_logging import record_llm_call
 
 from ..llm_models.llm_model_clients import create_llm_client
 from ..llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
@@ -44,6 +44,8 @@ class ModelAnnotatingTask(CodeListTask):
         # LLM setup
         self._llm = create_llm_client(config.llm)
         self._provider = config.llm.provider
+        self._model_name = config.llm.model_name
+        self._endpoint = config.llm.base_url if config.llm.base_url else config.llm.provider
 
         prompt = config.get_codelist_prompt(self._codelist_entries.concept_scheme_uri)
         self._llm_system_message = prompt.system_message
@@ -116,25 +118,17 @@ class ModelAnnotatingTask(CodeListTask):
                     elapsed = time.monotonic() - start
                     record_llm_call(
                         self,
-                        config.llm.base_url,
-                        get_agent_uri("model_annotator"),
+                        self._endpoint,
+                        self._model_name,
                         raw_response,
                         elapsed,
                     )
                     break
                 except Exception as exc:
-                    elapsed = time.monotonic() - start
-                    record_ml_call(
-                        self,
-                        config.llm.base_url + " [FAILED]",
-                        get_agent_uri("model_annotator"),
-                        elapsed,
-                    )
                     if attempt == max_retries:
                         raise RuntimeError(f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
-                    else:
-                        logger.warning(f"LLM call attempt {attempt}/{max_retries} failed ({exc}); retrying.")
-                        time.sleep(attempt)
+                    logger.warning(f"LLM call attempt {attempt}/{max_retries} failed ({exc}); retrying.")
+                    time.sleep(attempt)
 
         logger.warning(f"LLM returned classes: {classes}")
 

@@ -67,8 +67,10 @@ class ImpactAssessmentTask(CodeListTask):
             ImpactAssessment, include_raw=True
         )
         self.provider = config.llm.provider
+        self._model_name = config.llm.model_name
+        self._endpoint = config.llm.base_url if config.llm.base_url else config.llm.provider
 
-    def fetch_eli_expressions(self, target_graph: str) -> list[ProcessItem]:
+    def fetch_eli_expressions(self, target_graph: str | None = None) -> list[ProcessItem]:
         """
         Retrieve ELI expressions, their epvoc:expressionContent,
         language, and corresponding ELI work URI from the task's input container.
@@ -83,6 +85,8 @@ class ImpactAssessmentTask(CodeListTask):
                 - "languages": list containing the language URIs of the expressions
                 - "work_uris": list containing the work URIs of the expressions
         """
+        if target_graph is None:
+            target_graph = GRAPHS["expressions"]
         concept_scheme_uri = self.fetch_codelist_uri_for_task()
         q = Template(
             get_prefixes_for_query("task", "epvoc", "eli", "oa", "skos") +
@@ -239,12 +243,16 @@ class ImpactAssessmentTask(CodeListTask):
         ]
 
         start = time.monotonic()
-        result, raw_response = self.llm.invoke(messages)
+        out = self.llm.invoke(messages)
+        if out.get("parsing_error"):
+            raise RuntimeError(f"LLM parsing error: {out['parsing_error']}")
+        result = out["parsed"]
+        raw_response = out["raw"]
         elapsed = time.monotonic() - start
         record_llm_call(
             self,
-            get_config().llm.base_url,
-            get_agent_uri("impact_annotator"),
+            self._endpoint,
+            self._model_name,
             raw_response,
             elapsed,
         )
