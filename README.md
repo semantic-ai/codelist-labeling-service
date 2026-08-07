@@ -5,11 +5,15 @@ Service implementing the AI tasks for mapping decisions to codelists (DECIDe UC0
 
 This service uses [LangChain](https://docs.langchain.com/) for LLM integration, making it easy to swap providers without code changes. Configure the provider in `config.json` under the `llm` section.
 
+The image pre-installs the DECIDe approved provider integrations, **Ollama** (local) and
+**Mistral AI** (cloud). Switching between them is a `config.json` change only: no
+`requirements.txt` edit, no image rebuild.
+
 ### Configuration Fields
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `provider` | string | `"ollama"` | LangChain provider name (e.g. `"ollama"`, `"mistralai"`, `"openai"`, `"anthropic"`) or `"random"` for testing |
+| `provider` | string | `"ollama"` | LangChain provider name; `"ollama"` and `"mistralai"`. Use `"random"` for testing |
 | `model_name` | string | `"mistral-nemo"` | Model identifier for the chosen provider |
 | `temperature` | float | `0.1` | Sampling temperature (0.0–2.0) |
 | `api_key` | string \| null | `null` | API key (required for most cloud providers) |
@@ -34,42 +38,31 @@ No API key or extra package required. Point `base_url` at your Ollama instance.
 }
 ```
 
-#### Mistral AI
+#### Mistral AI (cloud)
 
-1. Update `config.json`:
-   ```json
-   {
-     "llm": {
-       "provider": "mistralai",
-       "model_name": "mistral-medium-latest",
-       "api_key": "your-mistral-api-key",
-       "base_url": "https://api.mistral.ai/v1",
-       "temperature": 0.1,
-       "timeout": 120
-     }
-   }
-   ```
+Update `config.json` and restart the service:
 
-2. Rebuild: `docker compose up`
+```json
+{
+  "llm": {
+    "provider": "mistralai",
+    "model_name": "mistral-medium-latest",
+    "api_key": "your-mistral-api-key",
+    "base_url": "https://api.mistral.ai/v1",
+    "temperature": 0.1,
+    "timeout": 120
+  }
+}
+```
 
-#### OpenAI
+Prefer supplying the key via the `LLM__API_KEY` environment variable over committing it
+to `config.json`.
 
-1. Update `config.json`:
-   ```json
-   {
-     "llm": {
-       "provider": "openai",
-       "model_name": "gpt-4o-mini",
-       "api_key": "your-openai-api-key",
-       "base_url": "https://api.openai.com/v1",
-       "temperature": 0.1,
-       "timeout": 120
-     }
-   }
-   ```
+#### Other providers
 
-2. Rebuild: `docker compose up`
-
+Any provider LangChain supports will work: add its `langchain-*` package (e.g.
+`langchain-anthropic`) to `requirements.txt`, rebuild the image, and set `provider`
+accordingly. Note that you then have to maintain that image yourself.
 
 ### Per-Codelist Prompts
 

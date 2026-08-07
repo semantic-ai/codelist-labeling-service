@@ -28,7 +28,7 @@ class LlmConfig(BaseModel):
 
     provider: str = Field(
         default="ollama",
-        description="LLM provider (e.g. 'ollama', 'openai', 'anthropic') or 'random' for testing"
+        description="LLM (Langchain) provider name; Supported providers are 'ollama' and 'mistralai'. Use 'random' for testing"
     )
     model_name: str = Field(
         default="mistral-nemo",
