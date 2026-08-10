@@ -188,12 +188,12 @@ class CodeListTask(DecisionTask, ABC):
             )
             return "";
         expression_uris = [binding["expression"]["value"] for binding in bindings]
-        logger.info(
-            "get_expressions_in_task_filter: found %d inputContainer resource(s) for task %s: %s",
-            len(expression_uris),
-            self.task_uri,
-            expression_uris,
-        )
+        # logger.info(
+        #     "get_expressions_in_task_filter: found %d inputContainer resource(s) for task %s: %s",
+        #     len(expression_uris),
+        #     self.task_uri,
+        #     expression_uris,
+        # )
         expression_values = "\n".join([sparql_escape_uri(uri) for uri in expression_uris])
         values = f"VALUES {varname} {{ {expression_values} }}"
 

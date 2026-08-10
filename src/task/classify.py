@@ -79,6 +79,11 @@ class ClassifierAnnotatingTask(CodeListTask):
         label_to_uri = codelist.build_label_to_uri_map()
 
         decisions = self.fetch_expressions_without_annotations_with_text(target_graph)
+        if not decisions:
+            raise RuntimeError(
+                f"No decisions without annotations found for task {self.task_uri} "
+                f"in graph {target_graph}; nothing to classify."
+            )
         logger.info(
             "Classifier annotation task %s contains %d decisions",
             self.task_uri,
