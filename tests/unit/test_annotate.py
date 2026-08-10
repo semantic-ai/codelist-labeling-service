@@ -40,6 +40,9 @@ from src.task.codelist import Codelist, CodelistEntry
 from src.config import AppConfig, LlmConfig
 
 from tests.unit.conftest import (
+    ACTIE_EXPRESSION_1_URI,
+    ACTIE_EXPRESSION_2_URI,
+    ACTIEPLAN_EXPRESSION_URI,
     ANNOTATION_URI,
     CONCEPT_URI,
     CONCEPT_URI_2,
@@ -324,13 +327,15 @@ class TestModelAnnotatingTaskProcess:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestFetchDecisionsWithoutAnnotations:
+    """Tests for annotate_actions=True (acties mode) — standalone expressions."""
 
     def test_returns_unannotated_expression(
         self, batch_task, unannotated_expressions
     ):
         """Both expressions appear when neither has an annotation."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -340,8 +345,9 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, one_annotated_one_plain_expression
     ):
         """Only the expression without an annotation is returned."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -351,8 +357,9 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, two_annotated_expressions
     ):
         """Neither expression is returned when both have classifying annotations."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI not in result
@@ -360,8 +367,9 @@ class TestFetchDecisionsWithoutAnnotations:
 
     def test_returns_empty_list_when_no_expressions(self, batch_task):
         """Returns an empty list when no eli:Expression triples exist."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert result == []
@@ -370,8 +378,9 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """Every returned value is a plain string (the expression URI)."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert all(isinstance(uri, str) for uri in result)
@@ -395,8 +404,9 @@ class TestFetchDecisionsWithoutAnnotations:
             }}
         """)
 
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -405,9 +415,10 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """When sh:targetNode is used, only the specified nodes are returned."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
             target_nodes=[EXPRESSION_URI],
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -417,9 +428,10 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """When sh:targetClass is used, all instances of that class are returned."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
             target_classes=["http://data.europa.eu/eli/ontology#Expression"],
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -429,10 +441,11 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """When both sh:targetNode and sh:targetClass are used, results are the union."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
             target_nodes=[EXPRESSION_URI],
             target_classes=["http://data.europa.eu/eli/ontology#Expression"],
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -442,12 +455,108 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """Without shape targets, defaults to eli:Expression (same as test_returns_unannotated_expression)."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
         assert EXPRESSION_URI_2 in result
+
+    def test_excludes_actie_members_of_actieplan(
+        self, batch_task, actieplan_and_standalone_actie
+    ):
+        """Acties that are members of an actieplan are excluded to prevent double-processing."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
+        )
+
+        # Standalone expression should be included
+        assert EXPRESSION_URI in result
+        # Actie that is a member of an actieplan should be excluded
+        assert ACTIE_EXPRESSION_1_URI not in result
+        # The actieplan itself should also be excluded (it's not standalone)
+        assert ACTIEPLAN_EXPRESSION_URI not in result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ModelBatchAnnotatingTask – fetch_decisions_without_annotations() actieplannen mode
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestFetchDecisionsActieplannenMode:
+    """Tests for annotate_actions=False (default, actieplannen mode)."""
+
+    def test_returns_actieplan_with_unannotated_acties(
+        self, batch_task, actieplan_with_unannotated_acties
+    ):
+        """Actieplan is returned when all member acties are unannotated."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert ACTIEPLAN_EXPRESSION_URI in result
+
+    def test_returns_actieplan_with_partially_annotated_acties(
+        self, batch_task, actieplan_with_one_annotated_actie
+    ):
+        """Actieplan is returned when at least one member actie is unannotated."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert ACTIEPLAN_EXPRESSION_URI in result
+
+    def test_excludes_fully_annotated_actieplan(
+        self, batch_task, actieplan_fully_annotated
+    ):
+        """Actieplan is NOT returned when all member acties have annotations."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert ACTIEPLAN_EXPRESSION_URI not in result
+
+    def test_does_not_return_standalone_expressions(
+        self, batch_task, standalone_acties_unannotated
+    ):
+        """Standalone expressions (no actieplan work_type) are not returned."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert EXPRESSION_URI not in result
+        assert EXPRESSION_URI_2 not in result
+
+    def test_does_not_return_member_acties_directly(
+        self, batch_task, actieplan_with_unannotated_acties
+    ):
+        """Member actie expressions are not returned — only the actieplan is."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert ACTIE_EXPRESSION_1_URI not in result
+        assert ACTIE_EXPRESSION_2_URI not in result
+        assert ACTIEPLAN_EXPRESSION_URI in result
+
+    def test_returns_empty_when_no_actieplannen(self, batch_task):
+        """Returns empty list when no actieplannen exist."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert result == []
+
+    def test_returns_list_of_strings(
+        self, batch_task, actieplan_with_unannotated_acties
+    ):
+        """Every returned value is a plain string (the expression URI)."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert all(isinstance(uri, str) for uri in result)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,21 +1,17 @@
 import os
 import random
 import time
-import uuid
-import json
 from string import Template
-from helpers import query, update, logger
-from escape_helpers import sparql_escape_uri, sparql_escape_string
+from helpers import query, logger
+from escape_helpers import sparql_escape_uri
 
-from decide_ai_service_base.task import DecisionTask, Task
-from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AGENT_TYPES, get_prefixes_for_query, \
-    GRAPHS
+from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AGENT_TYPES, get_prefixes_for_query, GRAPHS
 from decide_ai_service_base.annotation import LinkingAnnotation
 from decide_ai_service_base.util import get_agent_uri
 
 from ..llm_models.llm_model_clients import create_llm_client
 from ..llm_models.llm_task_models import LlmTaskInput
-from .codelist import Codelist, CodelistEntry, CodeListTask
+from .codelist import Codelist, CodeListTask
 from ..config import get_config
 
 
@@ -26,9 +22,12 @@ class ModelAnnotatingTask(CodeListTask):
 
     def __init__(self, task_uri: str, source: str = None,
                  codelist_entries: 'Codelist | None' = None,
-                 property_path_for_text: str | None = None):
+                 property_path_for_text: str | None = None,
+                 annotate_actionplan: bool = False):
+        
         super().__init__(task_uri)
         self.source = source
+        self.annotate_actionplan = annotate_actionplan
 
         if source is not None:
             self.source = source
@@ -47,63 +46,22 @@ class ModelAnnotatingTask(CodeListTask):
         self._llm_system_message = prompt.system_message
         self._llm_user_message = prompt.user_message
 
-    def fetch_text_with_property_path(self, property_uri: str) -> str:
-        """Fetch text from the task source using the specified property URI.
-
-        Uses sparql_escape_uri() to safely interpolate the property URI,
-        preventing SPARQL injection.
-        """
-        if property_uri.startswith("<") and property_uri.endswith(">"):
-            property_uri = property_uri[1:-1]
-
-        property_term = sparql_escape_uri(property_uri)
-        member_block = self.member_content_sparql_block(
-            "?s", content_property=property_term
-        )
-        q = Template(
-            get_prefixes_for_query("rdf", "eli", "eli-dl", "schema") +
-            """
-            SELECT ?s ?title ?description ?decision_basis ?content ?title_code ?work_type
-                   (GROUP_CONCAT(DISTINCT ?_member_text; separator="\\n\\n") AS ?member_content)
-            WHERE {
-                GRAPH ?graph {
-                    VALUES ?s { $source }
-                    ?s rdf:type eli:Expression .
-                    OPTIONAL { ?s eli:title ?title }
-                    OPTIONAL { ?s eli:description ?description }
-                    OPTIONAL { ?s eli-dl:decision_basis ?decision_basis }
-                    OPTIONAL { ?s $property ?content }
-                    $member_block
-                }
-            }
-            GROUP BY ?s ?title ?description ?decision_basis ?content ?title_code ?work_type
-            """
-        ).substitute(
-            source=sparql_escape_uri(self.source),
-            property=property_term,
-            member_block=member_block,
-        )
-
-        response = query(q, sudo=True)
-        bindings = response.get("results", {}).get("bindings", [])
-        texts = [self.assemble_expression_text(b) for b in bindings]
-        return "\n\n".join(text for text in texts if text)
-
     def process(self):
+        # Fetch the text to be annotated, either from a specific property path or from the default data source
         if self._property_path_for_text:
             task_data = self.fetch_text_with_property_path(self._property_path_for_text)
         else:
             task_data = self.fetch_data()
 
+        # Check if task data is empty or only whitespace
         if not task_data.strip():
-            logger.warning("No task data found; skipping model annotation.")
-            return
+            raise RuntimeError(f"No task data found for decision {self.source}; cannot annotate.")
 
         labels = self._codelist_entries.get_labels()
         if not labels:
-            logger.error("No concepts found in codelist; skipping model annotation.")
-            return
+            raise RuntimeError(f"No concepts found in codelist for decision {self.source}; cannot annotate.")
 
+        # Prepare labels for the prompt
         labels_for_prompt = self._codelist_entries.get_labels_with_definitions()
 
         # Fetch code → expression URI mapping (single action or actieplan members)
@@ -115,8 +73,7 @@ class ModelAnnotatingTask(CodeListTask):
             logger.warning("Using random label (provider=random).")
             classifications = {code: [random.choice(labels)] for code in action_codes}
         elif self._llm is None:
-            logger.error("No LLM client available; skipping model annotation.")
-            return
+            raise RuntimeError("No LLM client available; cannot annotate.")
         else:
             max_retries = 3
             user_message = self._llm_user_message.format(
@@ -168,12 +125,20 @@ class ModelAnnotatingTask(CodeListTask):
                     time.sleep(attempt)
 
         logger.info(
-            "Classification completed for decision %s: returned_classifications=%s",
-            self.source,
+            "[(check: %s) num_classifications=%d vs num_action_codes=%d ] Response=%s",
+            len(classifications) == len(action_codes),
+            len(classifications),
+            len(action_codes),
             classifications,
         )
 
+
+
         any_annotations = False
+        all_detected_concepts = set()
+
+        # process all underlying action codes and their corresponding class labels
+
         for action_code, class_labels in classifications.items():
             expression_uri = self._resolve_action_code(action_code, member_mapping)
             if not expression_uri:
@@ -206,6 +171,8 @@ class ModelAnnotatingTask(CodeListTask):
                 )
                 annotation.add_to_triplestore_if_not_exists()
                 any_annotations = True
+                all_detected_concepts.add(concept_uri)
+
                 logger.info(
                     "Stored model annotation for decision %s, action %s: code=%s, concept=%s",
                     self.source,
@@ -217,9 +184,28 @@ class ModelAnnotatingTask(CodeListTask):
             if not class_labels:
                 self._store_no_match_for_expression(expression_uri)
 
+        # Annotate the actieplan (source) itself with all detected concepts
+        # from the underlying action codes, if enabled and source is not a single action.
+        is_actionplan = self.source and self.source not in member_mapping.values()
+        if self.annotate_actionplan and is_actionplan and all_detected_concepts:
+            for concept_uri in all_detected_concepts:
+                annotation = LinkingAnnotation(
+                    self.task_uri,
+                    self.source,
+                    concept_uri,
+                    get_agent_uri("model_annotator"),
+                    AGENT_TYPES["ai_component"]
+                )
+                annotation.add_to_triplestore_if_not_exists()
+                logger.info(
+                    "Stored actionplan annotation for %s: concept=%s",
+                    self.source,
+                    concept_uri,
+                )
+
         if any_annotations:
             self.results_container_uris.append(self.create_output_container(self.source))
-        else:
+        elif not is_actionplan:
             self.store_no_match()
 
         rate_limit_delay = float(os.environ.get("RATE_LIMIT_DELAY_SECONDS", "0"))
@@ -316,73 +302,6 @@ class ModelAnnotatingTask(CodeListTask):
 
         return None
 
-    def _store_no_match_for_expression(self, expression_uri: str):
-        """Store a no-match-found annotation for a specific expression."""
-        uri = "http://mu.semte.ch/vocabularies/ext/no-match-found"
-        try:
-            annotation = LinkingAnnotation(
-                self.task_uri,
-                expression_uri,
-                uri,
-                get_agent_uri("model_annotator"),
-                AGENT_TYPES["ai_component"]
-            )
-            annotation.add_to_triplestore_if_not_exists()
-        except Exception as e:
-            logger.error("Failed to insert no-match-found for %s: %s", expression_uri, e)
-    
-    def store_no_match(self):
-        uri = f"http://mu.semte.ch/vocabularies/ext/no-match-found"
-
-        try:
-            annotation = LinkingAnnotation(
-                self.task_uri,
-                self.source,
-                uri,
-                get_agent_uri("model_annotator"),
-                AGENT_TYPES["ai_component"]
-            )
-            annotation.add_to_triplestore_if_not_exists()
-            self.results_container_uris.append(self.create_output_container(self.source))
-        except Exception as e:
-            error_msg = f"Failed to insert no-match-found: {e}"
-            logger.error(error_msg, exc_info=True)
-            raise RuntimeError(error_msg) from e
-            
-
-    def create_output_container(self, resource: str) -> str:
-        """
-        Function to create an output data container for an annotation.
-
-        Args:
-            resource: String containing an annotation URI
-
-        Returns:
-            String containing the URI of the output data container
-        """
-        container_id = str(uuid.uuid4())
-        container_uri = f"http://data.lblod.info/id/data-container/{container_id}"
-
-        q = Template(
-            get_prefixes_for_query("task", "nfo", "mu") +
-            """
-            INSERT DATA {
-                GRAPH $graph {
-                    $container a nfo:DataContainer ;
-                        mu:uuid $uuid ;
-                        task:hasResource $resource .
-                }
-            }
-            """
-        ).substitute(
-            graph=sparql_escape_uri(GRAPHS["data_containers"]),
-            container=sparql_escape_uri(container_uri),
-            uuid=sparql_escape_string(container_id),
-            resource=sparql_escape_uri(resource)
-        )
-
-        update(q, sudo=True)
-        return container_uri
 
 class ModelBatchAnnotatingTask(CodeListTask):
     """Task that creates ModelAnnotatingTasks for all decisions that are not yet annotated."""
@@ -392,7 +311,8 @@ class ModelBatchAnnotatingTask(CodeListTask):
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
 
-    def process(self):        
+    def process(self):  
+              
         codelist_entries = self.fetch_codelist()
         target_graph = self.get_target_graph()
         target_nodes, target_classes = self.fetch_shape_targets()
@@ -404,13 +324,14 @@ class ModelBatchAnnotatingTask(CodeListTask):
             target_nodes=target_nodes,
             target_classes=target_classes,
         )
-        logger.info(
-            "Model annotation batch %s contains %d decisions",
-            self.task_uri,
-            len(decision_uris),
-        )
+        # logger.info(
+        #     "Model annotation batch %s contains %d decisions",
+        #     self.task_uri,
+        #     len(decision_uris),
+        # )
 
         for i, decision_uri in enumerate(decision_uris):
+
             task = ModelAnnotatingTask(
                 self.task_uri,
                 source=decision_uri,
@@ -433,8 +354,20 @@ class ModelBatchAnnotatingTask(CodeListTask):
         target_graph: str | None = None,
         target_nodes: list[str] | None = None,
         target_classes: list[str] | None = None,
+        annotate_actions: bool = False,
     ) -> list[str]:
-        """Fetch decision URIs that have no classifying annotation for the given concept scheme.
+        """Fetch expression URIs that still need annotation for the given concept scheme.
+
+        Two modes controlled by ``annotate_actions``:
+
+        - ``annotate_actions=False`` (default, actieplannen mode):
+          Returns actieplan expressions (``eli:work_type vmm:Actieplan``) where
+          at least one underlying actie member has no classifying annotation yet
+          (i.e. annotation is incomplete).
+
+        - ``annotate_actions=True`` (acties mode):
+          Returns standalone expression URIs that have no classifying annotation
+          and are NOT members of any actieplan (to prevent double-processing).
 
         Uses ext:shapeForTargets to determine which decisions to consider:
           - target_nodes (from sh:targetNode): specific decision URIs
@@ -467,38 +400,75 @@ class ModelBatchAnnotatingTask(CodeListTask):
         else:
             target_clause = target_pattern
 
-        # Build the FILTER NOT EXISTS graphs to check
+        # Build the FILTER NOT EXISTS graphs to check for annotations
         if target_graph:
             filter_graph_values = f"VALUES ?g {{ {sparql_escape_uri(target_graph)} {sparql_escape_uri(GRAPHS['ai'])} }}"
         else:
             filter_graph_values = f"VALUES ?g {{ {sparql_escape_uri(GRAPHS['ai'])} }}"
 
-        expression_filter = self.get_expressions_in_task_filter()
-        q = Template(get_prefixes_for_query("rdf", "eli", "oa", "skos", "ext") + """
-        SELECT DISTINCT ?s
-        WHERE {
-            $expression_filter
-            $target_clause
-            FILTER NOT EXISTS {
-                $filter_graph_values
-                GRAPH ?g {
+        # Annotation check subpattern (reused in both modes)
+        annotation_check = f"""
+                {filter_graph_values}
+                GRAPH ?g {{
                     ?ann a oa:Annotation ;
-                         oa:hasTarget ?s ;
+                         oa:hasTarget ${{target_var}} ;
                          oa:motivatedBy oa:classifying ;
                          oa:hasBody ?concept .
-                    ?concept skos:inScheme|ext:forConceptScheme $concept_scheme_uri .
-                }
-            }
-        }
-        """).substitute(
-            expression_filter=expression_filter,
-            target_graph=sparql_escape_uri(target_graph), 
-            ai_graph=sparql_escape_uri(GRAPHS['ai']),
-            concept_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
-            concept_scheme_uri=sparql_escape_uri(concept_scheme_uri),
-            target_clause=target_clause,
-            filter_graph_values=filter_graph_values
-        )
+                    ?concept skos:inScheme|ext:forConceptScheme {sparql_escape_uri(concept_scheme_uri)} .
+                }}
+        """
+        annotation_check_s = annotation_check.replace("${target_var}", "?s")
+        annotation_check_member = annotation_check.replace("${target_var}", "?checkExpr")
+
+        expression_filter = self.get_expressions_in_task_filter()
+
+        vmm_prefix = "PREFIX vmm: <http://lblod.data.gift/vocabularies/vmm/>"
+
+        if annotate_actions:
+            # Acties mode: standalone expressions without annotations,
+            # excluding members of actieplannen (to prevent double-processing)
+            q = Template(get_prefixes_for_query("rdf", "eli", "oa", "skos", "ext") + f"""
+            {vmm_prefix}
+            SELECT DISTINCT ?s
+            WHERE {{
+                $expression_filter
+                $target_clause
+                FILTER NOT EXISTS {{
+                    {annotation_check_s}
+                }}
+                FILTER NOT EXISTS {{
+                    ?parentWork eli:has_member ?childWork .
+                    ?childWork eli:is_realized_by ?s .
+                }}
+            }}
+            """).substitute(
+                expression_filter=expression_filter,
+                target_clause=target_clause,
+            )
+        else:
+            # Actieplannen mode: actieplan expressions where at least one
+            # member actie still has no annotation
+            q = Template(get_prefixes_for_query("rdf", "eli", "oa", "skos", "ext") + f"""
+            {vmm_prefix}
+            SELECT DISTINCT ?s
+            WHERE {{
+                $expression_filter
+                $target_clause
+                ?work eli:is_realized_by ?s ;
+                      eli:work_type vmm:Actieplan .
+                FILTER EXISTS {{
+                    ?work eli:has_member ?checkWork .
+                    ?checkWork eli:is_realized_by ?checkExpr .
+                    ?checkExpr a eli:Expression .
+                    FILTER NOT EXISTS {{
+                        {annotation_check_member}
+                    }}
+                }}
+            }}
+            """).substitute(
+                expression_filter=expression_filter,
+                target_clause=target_clause,
+            )
 
         response = query(q, sudo=True)
         bindings = response.get("results", {}).get("bindings", [])
