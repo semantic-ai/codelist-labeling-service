@@ -311,8 +311,21 @@ class ImpactAssessmentTask(CodeListTask):
     def process(self):
         target_graph = self.get_target_graph()
 
-        for process_item in self.fetch_eli_expressions(target_graph):
-            for policy_label in self.fetch_policy_labels(process_item.expression_uri):
+        expressions = self.fetch_eli_expressions(target_graph)
+        if not expressions:
+            raise RuntimeError(
+                f"No expressions found in input container for task {self.task_uri}; "
+                f"cannot assess impact."
+            )
+
+        for process_item in expressions:
+            policy_labels = self.fetch_policy_labels(process_item.expression_uri)
+            if not policy_labels:
+                raise RuntimeError(
+                    f"No policy labels found for expression {process_item.expression_uri}; "
+                    f"cannot assess impact."
+                )
+            for policy_label in policy_labels:
                 assessment, _raw = self._process_single(process_item, policy_label)
                 self.store(policy_label.annotation_uri, assessment)
                 

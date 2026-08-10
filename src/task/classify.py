@@ -63,7 +63,7 @@ class ClassifierAnnotatingTask(CodeListTask):
             get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct", "skos") + """
             SELECT DISTINCT ?s ?title ?description ?decision_basis ?content
             WHERE {
-                $expression_Filter
+                $expression_filter
                 GRAPH $target_graph {
                     ?s rdf:type eli:Expression .
                     OPTIONAL { ?s eli:title ?title }
@@ -148,6 +148,11 @@ class ClassifierAnnotatingTask(CodeListTask):
         label_to_uri = codelist.build_label_to_uri_map()
 
         decisions = self.fetch_decisions_without_annotations_with_text(target_graph)
+        if not decisions:
+            raise RuntimeError(
+                f"No decisions without annotations found for task {self.task_uri} "
+                f"in graph {target_graph}; nothing to classify."
+            )
         print(f"{len(decisions)} decisions to classify.", flush=True)
 
         for i, decision in enumerate(decisions):
