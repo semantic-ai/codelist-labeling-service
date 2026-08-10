@@ -254,7 +254,7 @@ class ModelBatchAnnotatingTask(CodeListTask):
         target_nodes: list[str] | None = None,
         target_classes: list[str] | None = None,
     ) -> list[str]:
-        """Fetch decision URIs that have no classifying annotation for the given concept scheme.
+        """Fetch decision URIs that this component has not yet annotated for the given concept scheme.
 
         Uses ext:shapeForTargets to determine which decisions to consider:
           - target_nodes (from sh:targetNode): specific decision URIs
@@ -262,6 +262,10 @@ class ModelBatchAnnotatingTask(CodeListTask):
           - Neither: defaults to eli:Expression
 
         target_graph is optional; when not set, searches across all graphs.
+
+        An ext:no-match-found verdict counts as annotated.
+
+        Requires write_agent_info() to have run at startup.
         """
         # Build the target pattern based on SHACL shape configuration
         if target_nodes and target_classes:
@@ -294,11 +298,12 @@ class ModelBatchAnnotatingTask(CodeListTask):
             filter_graph_values = f"VALUES ?g {{ {sparql_escape_uri(GRAPHS['ai'])} }}"
 
         expression_filter = self.get_expressions_in_task_filter()
-        q = Template(get_prefixes_for_query("rdf", "eli", "oa", "skos", "ext") + """
+        q = Template(get_prefixes_for_query("rdf", "eli", "oa", "skos", "ext", "prov", "dct") + """
         SELECT DISTINCT ?s
         WHERE {
             $expression_filter
             $target_clause
+            $agent_uri prov:specializationOf ?component .
             FILTER NOT EXISTS {
                 $filter_graph_values
                 GRAPH ?g {
@@ -306,13 +311,31 @@ class ModelBatchAnnotatingTask(CodeListTask):
                          oa:hasTarget ?s ;
                          oa:motivatedBy oa:classifying ;
                          oa:hasBody ?concept .
+                    ?activity prov:generated ?ann .
+                }
+                GRAPH $concept_graph {
                     ?concept skos:inScheme|ext:forConceptScheme $concept_scheme_uri .
                 }
+                ?activity prov:wasAssociatedWith/prov:specializationOf ?component .
+            }
+            FILTER NOT EXISTS {
+                $filter_graph_values
+                GRAPH ?g {
+                    ?ann a oa:Annotation ;
+                         oa:hasTarget ?s ;
+                         oa:motivatedBy oa:classifying ;
+                         oa:hasBody ext:no-match-found .
+                    ?activity prov:generated ?ann .
+                }
+                ?activity prov:wasAssociatedWith/prov:specializationOf ?component .
+                ?activity dct:isPartOf ?job .
+                ?job ext:codelist $concept_scheme_uri .
             }
         }
         """).substitute(
             expression_filter=expression_filter,
-            target_graph=sparql_escape_uri(target_graph), 
+            agent_uri=sparql_escape_uri(get_agent_uri("model_annotator")),
+            target_graph=sparql_escape_uri(target_graph),
             ai_graph=sparql_escape_uri(GRAPHS['ai']),
             concept_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
             concept_scheme_uri=sparql_escape_uri(concept_scheme_uri),

@@ -45,6 +45,18 @@ CONCEPT_URI = "http://test.example.org/concepts/sdg-goal-1"
 CONCEPT_URI_2 = "http://test.example.org/concepts/sdg-goal-2"
 ANNOTATION_URI = "http://test.example.org/annotations/annotation-1"
 LANGUAGE_URI = "http://publications.europa.eu/resource/authority/language/ENG"
+
+# Agent provenance.  mock_agent_uri makes get_agent_uri("model_annotator")
+# return AGENT_URI; write_agent_info would normally link it to COMPONENT_URI via
+# prov:specializationOf.  AGENT_URI_OTHER_CONFIG is what a config change mints:
+# a different agent URI specialising the SAME component.  AGENT_URI_FOREIGN
+# stands for anything else that writes classifying annotations (a human
+# validator, another service).
+COMPONENT_URI = "http://lblod.data.gift/id/components/codelist-labeling/v1.0.0/model_annotator"
+COMPONENT_URI_FOREIGN = "http://lblod.data.gift/id/components/some-other-service/v1.0.0"
+AGENT_URI = "http://test.example.org/agents/model_annotator"
+AGENT_URI_OTHER_CONFIG = "http://test.example.org/agents/model_annotator-other-config"
+AGENT_URI_FOREIGN = "http://test.example.org/agents/foreign-annotator"
 EXPRESSION_CONTENT = (
     "This policy promotes targeted investment in renewable energy infrastructure "
     "to reduce carbon emissions, lower household energy costs, and create "
@@ -175,6 +187,55 @@ def mock_agent_uri(mocker):
     mocker.patch("src.task.annotate.get_agent_uri", side_effect=_fake)
     mocker.patch("src.task.impact.get_agent_uri", side_effect=_fake)
     mocker.patch("src.task.classify.get_agent_uri", side_effect=_fake)
+
+
+@pytest.fixture(autouse=True)
+def register_current_agent(isolate_test_graphs):
+    """Stand in for write_agent_info() at service startup.
+
+    ensure_agent_uri() links the running agent to its versioned component with
+    prov:specializationOf in the jobs graph.  Queries that scope on the
+    generating component bind their component from this triple, so without it
+    they match nothing.  Ordered after isolate_test_graphs so the wipe does not
+    remove it.
+    """
+    insert_agent_provenance(agent_uri=AGENT_URI, component_uri=COMPONENT_URI)
+    yield
+
+
+def insert_agent_provenance(
+    agent_uri: str,
+    component_uri: str,
+    activity_uri: str | None = None,
+    annotation_uri: str | None = None,
+) -> None:
+    """Write the provenance triples the base package writes for an annotation.
+
+    ensure_agent_uri() puts `agent prov:specializationOf component` in the jobs
+    graph; LinkingAnnotation puts the activity, its prov:generated link and
+    prov:wasAssociatedWith in the AI graph.  The activity/annotation half is
+    only written when both URIs are given.
+    """
+    activity_block = ""
+    if activity_uri and annotation_uri:
+        activity_block = f"""
+            GRAPH {sparql_escape_uri(GRAPHS["ai"])} {{
+                {sparql_escape_uri(activity_uri)}
+                    a {sparql_escape_uri(NS["prov"] + "Activity")} ;
+                    {sparql_escape_uri(NS["prov"] + "generated")} {sparql_escape_uri(annotation_uri)} ;
+                    {sparql_escape_uri(NS["prov"] + "wasAssociatedWith")} {sparql_escape_uri(agent_uri)} .
+            }}
+        """
+
+    sparql_update(f"""
+        INSERT DATA {{
+            GRAPH {sparql_escape_uri(GRAPHS["jobs"])} {{
+                {sparql_escape_uri(agent_uri)}
+                    {sparql_escape_uri(NS["prov"] + "specializationOf")} {sparql_escape_uri(component_uri)} .
+            }}
+            {activity_block}
+        }}
+    """)
 
 
 # ---------------------------------------------------------------------------
@@ -439,11 +500,19 @@ def one_annotated_one_plain_expression():
                     {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(EXPRESSION_URI_2)} ;
                     {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
                     {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI)} .
+            }}
+            GRAPH {sparql_escape_uri(GRAPHS["public"])} {{
                 {sparql_escape_uri(CONCEPT_URI)}
                     {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
             }}
         }}
     """)
+    insert_agent_provenance(
+        agent_uri=AGENT_URI,
+        component_uri=COMPONENT_URI,
+        activity_uri=TASK_URI,
+        annotation_uri=ANNOTATION_URI,
+    )
     yield
 
 
@@ -474,10 +543,124 @@ def two_annotated_expressions():
                     {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(EXPRESSION_URI_2)} ;
                     {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
                     {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI_2)} .
+            }}
+            GRAPH {sparql_escape_uri(GRAPHS["public"])} {{
                 {sparql_escape_uri(CONCEPT_URI)}
                     {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
                 {sparql_escape_uri(CONCEPT_URI_2)}
                     {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
+            }}
+        }}
+    """)
+    insert_agent_provenance(
+        agent_uri=AGENT_URI,
+        component_uri=COMPONENT_URI,
+        activity_uri=TASK_URI,
+        annotation_uri=ANNOTATION_URI,
+    )
+    insert_agent_provenance(
+        agent_uri=AGENT_URI,
+        component_uri=COMPONENT_URI,
+        activity_uri="http://test.example.org/tasks/task-2",
+        annotation_uri="http://test.example.org/annotations/annotation-2",
+    )
+    yield
+
+
+def _annotated_by(agent_uri: str, component_uri: str):
+    """EXPRESSION_URI annotated with an in-codelist concept by a given agent.
+
+    EXPRESSION_URI_2 is inserted unannotated as the control.  skos:inScheme goes
+    in the public graph, where the codelists actually live: putting it in the AI
+    graph instead makes these tests pass against a filter that never matches.
+    """
+    sparql_update(f"""
+        INSERT DATA {{
+            GRAPH {sparql_escape_uri(GRAPHS["expressions"])} {{
+                {sparql_escape_uri(EXPRESSION_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "{EXPRESSION_CONTENT}" .
+                {sparql_escape_uri(EXPRESSION_URI_2)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "{EXPRESSION_CONTENT_2}" .
+            }}
+            GRAPH {sparql_escape_uri(GRAPHS["ai"])} {{
+                {sparql_escape_uri(ANNOTATION_URI)}
+                    a {sparql_escape_uri(NS["oa"] + "Annotation")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(EXPRESSION_URI)} ;
+                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI)} .
+            }}
+            GRAPH {sparql_escape_uri(GRAPHS["public"])} {{
+                {sparql_escape_uri(CONCEPT_URI)}
+                    {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
+            }}
+        }}
+    """)
+    insert_agent_provenance(
+        agent_uri=agent_uri,
+        component_uri=component_uri,
+        activity_uri=TASK_URI,
+        annotation_uri=ANNOTATION_URI,
+    )
+
+
+@pytest.fixture
+def expression_annotated_by_other_config_of_same_component():
+    """
+    EXPRESSION_URI annotated by a different agent URI that specialises the SAME
+    component -- what a config change produces, since ensure_agent_uri() mints a
+    new agent per (component, config).
+    """
+    _annotated_by(AGENT_URI_OTHER_CONFIG, COMPONENT_URI)
+    yield
+
+
+@pytest.fixture
+def expression_annotated_by_foreign_component():
+    """
+    EXPRESSION_URI annotated by an agent of an unrelated component (another
+    service, or a human validator once agents are typed).
+    """
+    _annotated_by(AGENT_URI_FOREIGN, COMPONENT_URI_FOREIGN)
+    yield
+
+
+@pytest.fixture
+def expression_with_no_match_annotation():
+    """
+    Inserts EXPRESSION_URI carrying an ext:no-match-found annotation, i.e. the
+    LLM already examined it for CONCEPT_SCHEME_URI and found nothing, plus the
+    provenance chain (activity -> task -> job -> ext:codelist) that ties that
+    verdict to a specific codelist.  EXPRESSION_URI_2 is left untouched.
+    """
+    no_match = "http://mu.semte.ch/vocabularies/ext/no-match-found"
+    sparql_update(f"""
+        INSERT DATA {{
+            GRAPH {sparql_escape_uri(GRAPHS["expressions"])} {{
+                {sparql_escape_uri(EXPRESSION_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "{EXPRESSION_CONTENT}" .
+                {sparql_escape_uri(EXPRESSION_URI_2)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "{EXPRESSION_CONTENT_2}" .
+            }}
+            GRAPH {sparql_escape_uri(GRAPHS["ai"])} {{
+                {sparql_escape_uri(ANNOTATION_URI)}
+                    a {sparql_escape_uri(NS["oa"] + "Annotation")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(EXPRESSION_URI)} ;
+                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(no_match)} .
+                {sparql_escape_uri(TASK_URI)}
+                    a {sparql_escape_uri(NS["prov"] + "Activity")} ;
+                    {sparql_escape_uri(NS["prov"] + "generated")} {sparql_escape_uri(ANNOTATION_URI)} ;
+                    {sparql_escape_uri(NS["prov"] + "wasAssociatedWith")} {sparql_escape_uri(AGENT_URI)} .
+            }}
+            GRAPH {sparql_escape_uri(GRAPHS["jobs"])} {{
+                {sparql_escape_uri(TASK_URI)}
+                    {sparql_escape_uri(NS["dct"] + "isPartOf")} {sparql_escape_uri(JOB_URI)} .
+                {sparql_escape_uri(JOB_URI)}
+                    {sparql_escape_uri(NS["ext"] + "codelist")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
             }}
         }}
     """)
