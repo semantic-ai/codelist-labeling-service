@@ -378,6 +378,62 @@ class TestFetchDecisionsWithoutAnnotations:
         assert EXPRESSION_URI not in result
         assert EXPRESSION_URI_2 not in result
 
+    def test_excludes_expression_annotated_by_another_config_of_same_component(
+        self, batch_task, expression_annotated_by_other_config_of_same_component
+    ):
+        """
+        A config change mints a new agent URI for the same component version.
+        Those annotations still count, so a prompt or model tweak does not
+        re-annotate the whole corpus.
+        """
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI
+        )
+
+        assert EXPRESSION_URI not in result
+        assert EXPRESSION_URI_2 in result
+
+    def test_includes_expression_annotated_by_a_foreign_component(
+        self, batch_task, expression_annotated_by_foreign_component
+    ):
+        """
+        An annotation from an unrelated component does not count as this
+        component's work, so the expression must still be processed.
+        """
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI
+        )
+
+        assert EXPRESSION_URI in result
+
+    def test_excludes_expression_the_llm_found_no_match_for(
+        self, batch_task, expression_with_no_match_annotation
+    ):
+        """
+        An ext:no-match-found annotation means the LLM already examined the
+        expression for this codelist; it must not be sent to the LLM again.
+        """
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI
+        )
+
+        assert EXPRESSION_URI not in result
+        assert EXPRESSION_URI_2 in result
+
+    def test_no_match_for_another_codelist_does_not_exclude(
+        self, batch_task, expression_with_no_match_annotation
+    ):
+        """
+        ext:no-match-found carries no codelist of its own, so it only counts for
+        the codelist of the job that produced it.  A different codelist must
+        still be evaluated.
+        """
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri="http://test.example.org/codelists/other-codelist"
+        )
+
+        assert EXPRESSION_URI in result
+
     def test_returns_empty_list_when_no_expressions(self, batch_task, mocker):
         """Returns an empty list when no eli:Expression triples exist."""
         mocker.patch.object(
