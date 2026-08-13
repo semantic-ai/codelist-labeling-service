@@ -75,7 +75,7 @@ The `codelist_prompts` section in `config.json` lets you override the system and
       "system_message": "You are a juridical assistant...",
       "user_message": "Determine the best matching codes...\n{code_list}\n{decision_text}"
     },
-    "http://data.lblod.gift/id/conceptscheme/sdg-simple": {
+    "http://lblod.data.gift/id/conceptscheme/sdg-simple": {
       "system_message": "You are an SDG classification expert...",
       "user_message": "Analyze the decision text for SDGs...\n{code_list}\n{decision_text}"
     }
