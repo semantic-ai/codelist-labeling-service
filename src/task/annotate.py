@@ -145,7 +145,8 @@ class ModelAnnotatingTask(CodeListTask):
                 get_agent_uri("model_annotator"),
                 AGENT_TYPES["ai_component"]
             )
-            annotation.add_to_triplestore_if_not_exists()
+            annotation_uri = annotation.add_to_triplestore_if_not_exists()
+            self.results_container_uris.append(self.create_output_container(annotation_uri))
             logger.warning("Created SDG annotation")
 
         if classes:
@@ -170,7 +171,8 @@ class ModelAnnotatingTask(CodeListTask):
                 get_agent_uri("model_annotator"),
                 AGENT_TYPES["ai_component"]
             )
-            annotation.add_to_triplestore_if_not_exists()
+            annotation_uri = annotation.add_to_triplestore_if_not_exists()
+            self.results_container_uris.append(self.create_output_container(annotation_uri))
             self.results_container_uris.append(self.create_output_container(self.source))
         except Exception as e:
             error_msg = f"Failed to insert no-match-found: {e}"

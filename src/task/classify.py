@@ -188,7 +188,8 @@ class ClassifierAnnotatingTask(CodeListTask):
                     get_agent_uri("classifier_annotator"),
                     AGENT_TYPES["ai_component"],
                 )
-                annotation.add_to_triplestore_if_not_exists()
+                annotation_uri = annotation.add_to_triplestore_if_not_exists()
+                self.results_container_uris.append(self.create_output_container(annotation_uri))
 
             self.results_container_uris.append(self.create_output_container(uri))
             print(
