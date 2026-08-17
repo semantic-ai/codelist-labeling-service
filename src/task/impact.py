@@ -187,6 +187,8 @@ class ImpactAssessmentTask(CodeListTask):
                 ?concept a skos:Concept ;
                          skos:inScheme $concept_scheme_uri ;
                          skos:prefLabel ?label .
+                FILTER(LANG(?label) = "en" || LANG(?label) = "")
+                         
               }
             }
             """
