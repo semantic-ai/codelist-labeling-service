@@ -84,13 +84,11 @@ class ModelAnnotatingTask(CodeListTask):
             task_data = self.fetch_data()
 
         if not task_data.strip():
-            logger.warning("No task data found; skipping model annotation.")
-            return
+            raise RuntimeError(f"No task data found for decision {self.source}; cannot annotate.")
 
         labels = self._codelist_entries.get_labels()
         if not labels:
-            logger.error("No concepts found in codelist; skipping model annotation.")
-            return
+            raise RuntimeError(f"No concepts found in codelist for decision {self.source}; cannot annotate.")
 
         labels_for_prompt = self._codelist_entries.get_labels_with_definitions()
 
@@ -99,8 +97,7 @@ class ModelAnnotatingTask(CodeListTask):
             logger.warning("Using random label (provider=random).")
             classes = [random.choice(labels)]
         elif self._llm is None:
-            logger.error("No LLM client available; skipping model annotation.")
-            return
+            raise RuntimeError(f"No LLM client available for decision {self.source}; cannot annotate.")
         else:
             max_retries = 3
             llm_input = LlmTaskInput(system_message=self._llm_system_message,

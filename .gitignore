@@ -28,3 +28,4 @@ testing.ipynb
 /custom-config
 docker-compose-standalone.yml
 test_task_flow.ipynb
+.env
