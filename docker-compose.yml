@@ -32,7 +32,6 @@ services:
       CONFIG_PATH: /config/config.json
       COMPOSE_FILE: /tmp/docker-compose.yaml
       COMPOSE_SERVICE: codelist-labeling
-      LOG_SPARQL_QUERIES: false
     restart: no
     volumes:
       - ./:/app
