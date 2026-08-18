@@ -89,7 +89,7 @@ class ImpactAssessmentTask(CodeListTask):
             target_graph = GRAPHS["expressions"]
         concept_scheme_uri = self.fetch_codelist_uri_for_task()
         q = Template(
-            get_prefixes_for_query("task", "epvoc", "eli", "oa", "skos") +
+            get_prefixes_for_query("task", "epvoc", "eli", "oa", "skos", "prov", "dct", "ext") +
             f"""
             SELECT 
                 ?expression
@@ -130,8 +130,17 @@ class ImpactAssessmentTask(CodeListTask):
                             ))
                         }}
                     }}
-                    GRAPH $public_graph {{
-                        ?annConcept skos:inScheme $concept_scheme_uri .
+                    {{
+                        GRAPH $public_graph {{
+                            ?annConcept skos:inScheme $concept_scheme_uri .
+                        }}
+                    }} UNION {{
+                        VALUES ?noMatchFound {{
+                            <http://mu.semte.ch/vocabularies/ext/no-match-found>
+                        }}
+                        ?ann oa:hasBody ?noMatchFound .
+                        ?t prov:generated ?ann.
+                        ?t dct:isPartOf / ext:codelist $concept_scheme_uri .
                     }}
                 }}
             }}
@@ -168,6 +177,36 @@ class ImpactAssessmentTask(CodeListTask):
 
     def fetch_policy_labels(self, expression_uri: str) -> list[PolicyLabel]:
         concept_scheme_uri = self.fetch_codelist_uri_for_task()
+        should_run_impact_q = Template(
+            get_prefixes_for_query("oa", "skos", "ext", "prov", "dct") +
+            """
+            SELECT ?conceptScheme
+            WHERE {
+                VALUES ?conceptScheme {
+                    $concept_scheme_uri
+                }
+                $impact_task ext:isEnabledFor ?conceptScheme .
+                FILTER NOT EXISTS {
+                    ?ann oa:hasTarget $expression_uri .
+                    VALUES ?noMatchFound {
+                        <http://mu.semte.ch/vocabularies/ext/no-match-found>
+                    }
+                    ?ann oa:hasBody ?noMatchFound .
+                    ?t prov:generated ?ann.
+                    ?t dct:isPartOf / ext:codelist ?conceptScheme .
+                }
+            } LIMIT 1
+            """
+        ).substitute(
+            impact_task=sparql_escape_uri(self.__task_type__),
+            concept_scheme_uri=sparql_escape_uri(concept_scheme_uri),
+            expression_uri=sparql_escape_uri(expression_uri)
+        )
+        bindings = query(should_run_impact_q, sudo=True).get("results", {}).get("bindings", [])
+        if not bindings:
+            # impact not enabled for this codelist, e.g. RMZ OR no match found concept for this codelist
+            return []
+
         q = Template(
             get_prefixes_for_query("oa", "skos", "ext") +
             """
@@ -187,6 +226,8 @@ class ImpactAssessmentTask(CodeListTask):
                 ?concept a skos:Concept ;
                          skos:inScheme $concept_scheme_uri ;
                          skos:prefLabel ?label .
+                FILTER(LANG(?label) = "en" || LANG(?label) = "")
+                         
               }
             }
             """
@@ -198,9 +239,10 @@ class ImpactAssessmentTask(CodeListTask):
         )
         bindings = query(q, sudo=True).get("results", {}).get("bindings", [])
         if not bindings:
-            logger.warning(
-                f"No policy labels (excluding no-match-found) found for expression {expression_uri}")
-            return []
+            raise RuntimeError(
+                f"No policy labels found for expression {expression_uri} and conceptscheme {concept_scheme_uri}; "
+                f"cannot assess impact."
+            )
 
         return [
             PolicyLabel(
@@ -320,11 +362,7 @@ class ImpactAssessmentTask(CodeListTask):
 
         for process_item in expressions:
             policy_labels = self.fetch_policy_labels(process_item.expression_uri)
-            if not policy_labels:
-                raise RuntimeError(
-                    f"No policy labels found for expression {process_item.expression_uri}; "
-                    f"cannot assess impact."
-                )
+            
             for policy_label in policy_labels:
                 assessment, _raw = self._process_single(process_item, policy_label)
                 self.store(policy_label.annotation_uri, assessment)

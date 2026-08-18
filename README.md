@@ -20,6 +20,19 @@ The image pre-installs the DECIDe approved provider integrations, **Ollama** (lo
 | `base_url` | string \| null | `"http://ollama:11434"` | Base URL for the API endpoint |
 | `timeout` | int | `120` | Request timeout in seconds |
 
+### Computing impact
+
+Impact will only be computed for codelists for which that job is explicitly enabled. This is done by running e.g.
+
+```
+PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
+INSERT DATA {
+  GRAPH <http://mu.semte.ch/graphs/public> {
+    <http://lblod.data.gift/id/jobs/concept/TaskOperation/codelist-matching/assess-impact> ext:isEnabledFor <http://data.lblod.gift/id/conceptscheme/sdg-simple> .
+  }
+}
+```
+
 ### Provider Examples
 
 #### Ollama (local, default)
