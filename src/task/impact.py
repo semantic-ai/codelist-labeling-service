@@ -45,7 +45,6 @@ class ImpactAssessment(BaseModel):
 class ProcessItem(BaseModel):
     expression_uri: str
     expression_content: str
-    language: str
     work_uri: str
 
 
@@ -73,7 +72,7 @@ class ImpactAssessmentTask(CodeListTask):
     def fetch_eli_expressions(self, target_graph: str | None = None) -> list[ProcessItem]:
         """
         Retrieve ELI expressions, their epvoc:expressionContent,
-        language, and corresponding ELI work URI from the task's input container.
+        and corresponding ELI work URI from the task's input container.
 
         Args:
             target_graph: String containing the URI of the graph to query for ELI expressions
@@ -82,7 +81,6 @@ class ImpactAssessmentTask(CodeListTask):
             Dictionary containing:
                 - "expression_uris": list containing the expression URIs
                 - "expression_contents": list containing the expression contents
-                - "languages": list containing the language URIs of the expressions
                 - "work_uris": list containing the work URIs of the expressions
         """
         if target_graph is None:
@@ -93,7 +91,6 @@ class ImpactAssessmentTask(CodeListTask):
             f"""
             SELECT 
                 ?expression
-                ?lang
                 ?work
                 (GROUP_CONCAT(?cont;separator="") AS ?content)
             WHERE {{
@@ -107,8 +104,7 @@ class ImpactAssessmentTask(CodeListTask):
 
                 GRAPH {sparql_escape_uri(target_graph)} {{
                     ?expression a eli:Expression ;
-                                epvoc:expressionContent ?cont ;
-                                eli:language ?lang .
+                                epvoc:expressionContent ?cont .
 
                     ?work a eli:Work ;
                         eli:is_realized_by ?expression .
@@ -144,7 +140,7 @@ class ImpactAssessmentTask(CodeListTask):
                     }}
                 }}
             }}
-            GROUP BY ?expression ?lang ?work
+            GROUP BY ?expression ?work
             """
         ).substitute(
             task=sparql_escape_uri(self.task_uri),
@@ -163,14 +159,12 @@ class ImpactAssessmentTask(CodeListTask):
             ProcessItem(
                 expression_uri=t[0],
                 expression_content=t[1],
-                language=t[2],
-                work_uri=t[3]
+                work_uri=t[2]
             )
             for t
             in zip(
                 [b["expression"]["value"] for b in bindings],
                 [b["content"]["value"] for b in bindings],
-                [b["lang"]["value"] for b in bindings],
                 [b["work"]["value"] for b in bindings]
             )
         ]
