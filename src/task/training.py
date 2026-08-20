@@ -1,3 +1,7 @@
+import json
+from datetime import datetime
+from pathlib import Path
+
 from helpers import query, update, logger
 from escape_helpers import sparql_escape_uri
 
@@ -18,10 +22,9 @@ class ClassifierTrainingTask(CodeListTask):
     def process(self):
         codelist_entries = self.fetch_codelist()
 
-        decisions = self.fetch_decisions_with_classes()
+        decisions = self.fetch_actions_with_classes()
         decisions = self.convert_classes_to_original_names(decisions, codelist_entries)
 
-        decisions = [d for d in decisions if d.get("classes")]
         if not decisions:
             logger.warning(
                 "No labeled decisions found for training task %s; skipping.",
@@ -30,6 +33,8 @@ class ClassifierTrainingTask(CodeListTask):
             return
 
         ml_config = get_config().ml_training
+
+        self.save_dataset_jsonl(decisions)
 
         logger.info(
             "Starting classifier training task %s with %d decisions and %d labels",
@@ -48,6 +53,22 @@ class ClassifierTrainingTask(CodeListTask):
         )
         logger.info("Completed classifier training task %s", self.task_uri)
 
+    # Repo root (src/task/training.py -> src/task -> src -> repo root), so the path
+    # is independent of the process's cwd (which may not be the app/repo dir).
+    _REPO_ROOT = Path(__file__).resolve().parents[2]
+
+    def save_dataset_jsonl(self, decisions: list[dict], output_dir: str | Path | None = None) -> Path:
+        """Save training decisions to a JSONL file."""
+        dir_path = Path(output_dir) if output_dir is not None else self._REPO_ROOT / "data"
+        dir_path.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_path = dir_path / f"training_dataset_{timestamp}.jsonl"
+        with open(file_path, "w", encoding="utf-8") as f:
+            for decision in decisions:
+                f.write(json.dumps(decision, ensure_ascii=False) + "\n")
+        logger.info("Saved training dataset (%d samples) to %s", len(decisions), file_path)
+        return file_path
+
     @staticmethod
     def convert_classes_to_original_names(decisions: list[dict[str, str | list[str]]], codelist: Codelist):
         uri_to_label = codelist.build_uri_to_label_map()
@@ -56,6 +77,172 @@ class ClassifierTrainingTask(CodeListTask):
                 uri_to_label.get(c, c) for c in decision["classes"]
             ]
         return decisions
+    
+    @staticmethod
+    def _assemble_action_text(binding: dict) -> str:
+        """Assemble training text for an action: plan context + action content."""
+        parts: list[str] = []
+
+        # Plan context header
+        plan_title = binding.get("plan_title", {}).get("value", "")
+        plan_desc = binding.get("plan_description", {}).get("value", "")
+        plan_code = binding.get("plan_code", {}).get("value", "")
+        if plan_title or plan_code:
+            header = f"[Plan: {plan_title}]" if plan_title else ""
+            if plan_code:
+                header = f"[Plan: {plan_code} {plan_title}]"
+            parts.append(header)
+        if plan_desc:
+            parts.append(plan_desc)
+
+        # Action's own text
+        action_code = binding.get("action_code", {}).get("value", "")
+        action_title = binding.get("action_title", {}).get("value", "")
+        if action_code or action_title:
+            parts.append(f"{action_code} {action_title}".strip())
+
+        action_desc = binding.get("action_description", {}).get("value", "")
+        if action_desc:
+            parts.append(action_desc)
+
+        action_content = binding.get("action_content", {}).get("value", "")
+        if action_content:
+            parts.append(action_content)
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _extract_classes(binding: dict, excluded_classes: set[str] | None = None) -> list[str]:
+        classes_concat = binding.get("classes", {}).get("value", "")
+        excluded = excluded_classes or set()
+        return [c for c in classes_concat.split("|") if c and c not in excluded]
+
+    def _build_training_sample(
+        self,
+        binding: dict,
+        decision_key: str,
+        text: str,
+        excluded_classes: set[str] | None = None,
+    ) -> dict[str, str | list[str]]:
+        return {
+            "decision": binding[decision_key]["value"],
+            "classes": self._extract_classes(binding, excluded_classes),
+            "text": text,
+        }
+
+
+    def fetch_actions_with_classes(self, include_siblings: bool = False) -> list[dict[str, str | list[str]]]:
+        """Fetch annotated actions (member expressions) with parent actieplan context.
+
+        Returns one sample per action expression that has classifying annotations,
+        including the action's own text and the parent actieplan's title/description.
+        """
+        concept_scheme_uri = sparql_escape_uri(self.fetch_codelist_uri_for_task())
+        ai_graph = sparql_escape_uri(GRAPHS['ai'])
+        public_graph = sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public"))
+
+        sibling_select = ""
+        sibling_block = ""
+        if include_siblings:
+            sibling_select = "(GROUP_CONCAT(DISTINCT ?_sibling_summary; separator=\" | \") AS ?sibling_summaries)"
+            sibling_block = """
+                OPTIONAL {
+                    ?planWork eli:has_member ?siblingWork .
+                    ?siblingWork eli:is_realized_by ?siblingExpr .
+                    ?siblingExpr a eli:Expression .
+                    FILTER(?siblingExpr != ?action)
+                    OPTIONAL { ?siblingExpr schema:code ?_sib_code }
+                    OPTIONAL { ?siblingExpr eli:title ?_sib_title }
+                    BIND(CONCAT(COALESCE(STR(?_sib_code), ""), " ", COALESCE(STR(?_sib_title), "")) AS ?_sibling_summary)
+                }
+            """
+
+        no_match_uri = "http://mu.semte.ch/vocabularies/ext/no-match-found"
+
+        q = get_prefixes_for_query("rdf", "eli", "oa", "epvoc", "skos", "schema") + f"""
+        SELECT ?action ?classes
+               ?action_code ?action_title ?action_description ?action_content
+               ?plan_title ?plan_description ?plan_code
+               {sibling_select}
+        WHERE {{
+            {{
+                SELECT ?action (GROUP_CONCAT(DISTINCT STR(?body); separator="|") AS ?classes)
+                WHERE {{
+                    GRAPH {ai_graph} {{
+                        ?ann a oa:Annotation ;
+                             oa:hasTarget ?action ;
+                             oa:motivatedBy oa:classifying ;
+                             oa:hasBody ?body .
+                    }}
+                    {{
+                        GRAPH {public_graph} {{
+                            ?body a skos:Concept ;
+                                  skos:inScheme ?scheme .
+                        }}
+                        VALUES ?scheme {{ {concept_scheme_uri} }}
+                    }}
+                    UNION
+                    {{
+                        GRAPH {ai_graph} {{
+                            ?ann oa:hasBody <{no_match_uri}> .
+                            ?ann oa:hasTarget ?action .
+                            FILTER NOT EXISTS {{
+                                ?other_ann a oa:Annotation ;
+                                    oa:hasTarget ?action ;
+                                    oa:motivatedBy oa:classifying ;
+                                    oa:hasBody ?real_body .
+                                GRAPH {public_graph} {{
+                                    ?real_body a skos:Concept ;
+                                              skos:inScheme {concept_scheme_uri} .
+                                }}
+                            }}
+                        }}
+                    }}
+                }}
+                GROUP BY ?action
+            }}
+
+            GRAPH ?g {{
+                ?action a eli:Expression .
+
+                # Walk up: action expr ← work ← plan work → plan expr
+                ?actionWork eli:is_realized_by ?action .
+                ?planWork eli:has_member ?actionWork ;
+                          eli:is_realized_by ?planExpr .
+                ?planExpr a eli:Expression .
+
+                # Action's own fields
+                OPTIONAL {{ ?action schema:code ?action_code }}
+                OPTIONAL {{ ?action eli:title ?action_title }}
+                OPTIONAL {{ ?action eli:description ?action_description }}
+                OPTIONAL {{ ?action epvoc:expressionContent ?action_content }}
+
+                # Parent plan context
+                OPTIONAL {{ ?planExpr eli:title ?plan_title }}
+                OPTIONAL {{ ?planExpr eli:description ?plan_description }}
+                OPTIONAL {{ ?planExpr schema:code ?plan_code }}
+
+                {sibling_block}
+            }}
+        }}
+        GROUP BY ?action ?classes
+                 ?action_code ?action_title ?action_description ?action_content
+                 ?plan_title ?plan_description ?plan_code
+        """
+
+        res = query(q, sudo=True)
+        bindings = res.get("results", {}).get("bindings", [])
+
+        excluded_classes = {no_match_uri}
+        return [
+            self._build_training_sample(
+                b,
+                decision_key="action",
+                text=self._assemble_action_text(b),
+                excluded_classes=excluded_classes,
+            )
+            for b in bindings
+        ]
 
     def fetch_decisions_with_classes(self) -> list[dict[str, str | list[str]]]:
         expression_filter = self.get_expressions_in_task_filter("?decision")
@@ -73,15 +260,32 @@ class ClassifierTrainingTask(CodeListTask):
                         oa:motivatedBy oa:classifying ;
                         oa:hasBody ?body .
                 }
-                
-                GRAPH $public_graph {
-                    ?body a skos:Concept ;
-                          skos:inScheme ?scheme .
-                  }
-            
-                  VALUES ?scheme {
-                    $concept_scheme_uri
-                  }
+                {
+                    GRAPH $public_graph {
+                        ?body a skos:Concept ;
+                              skos:inScheme ?scheme .
+                    }
+                    VALUES ?scheme {
+                        $concept_scheme_uri
+                    }
+                }
+                UNION
+                {
+                    GRAPH $ai_graph {
+                        ?ann oa:hasBody <$no_match_uri> .
+                        ?ann oa:hasTarget ?decision .
+                        FILTER NOT EXISTS {
+                            ?other_ann a oa:Annotation ;
+                                oa:hasTarget ?decision ;
+                                oa:motivatedBy oa:classifying ;
+                                oa:hasBody ?real_body .
+                            GRAPH $public_graph {
+                                ?real_body a skos:Concept ;
+                                          skos:inScheme $concept_scheme_uri .
+                            }
+                        }
+                    }
+                }
             }
             GROUP BY ?decision
         }
@@ -102,23 +306,20 @@ class ClassifierTrainingTask(CodeListTask):
             public_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),
             concept_scheme_uri=sparql_escape_uri(self.fetch_codelist_uri_for_task()),
             member_block=member_block,
+            no_match_uri="http://mu.semte.ch/vocabularies/ext/no-match-found",
         )
 
         res = query(q, sudo=True)
         bindings = res.get("results", {}).get("bindings", [])
 
-        results = []
-        for b in bindings:
-            decision = b["decision"]["value"]
-            classes_concat = b.get("classes", {}).get("value", "")
-            classes = [c for c in classes_concat.split("|") if c]
-
-            text = self.assemble_expression_text(b)
-
-            results.append({
-                "decision": decision,
-                "classes": classes,
-                "text": text
-            })
-
-        return results
+        no_match_uri = "http://mu.semte.ch/vocabularies/ext/no-match-found"
+        excluded_classes = {no_match_uri}
+        return [
+            self._build_training_sample(
+                b,
+                decision_key="decision",
+                text=self.assemble_expression_text(b),
+                excluded_classes=excluded_classes,
+            )
+            for b in bindings
+        ]

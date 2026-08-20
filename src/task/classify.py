@@ -17,22 +17,6 @@ class ClassifierAnnotatingTask(CodeListTask):
 
     __task_type__ = TASK_OPERATIONS["codelist_classifier_annotation"]
 
-    def get_target_graph(self) -> str | None:
-        q = Template(
-            """
-            PREFIX dct: <http://purl.org/dc/terms/>
-            PREFIX ext: <http://mu.semte.ch/vocabularies/ext/>
-            SELECT ?graph WHERE {
-                $task dct:isPartOf ?job .
-                ?job ext:graphForTargets ?graph .
-            }
-            """
-        ).substitute(task=sparql_escape_uri(self.task_uri))
-
-        res = query(q, sudo=True)
-        bindings = res.get("results", {}).get("bindings", [])
-        return bindings[0]["graph"]["value"] if bindings else None
-
     def get_job_confidence_threshold(self) -> float | None:
         q = Template(
             """
@@ -53,56 +37,6 @@ class ClassifierAnnotatingTask(CodeListTask):
             except (KeyError, ValueError):
                 pass
         return None
-
-    def fetch_decisions_without_annotations_with_text(self, target_graph: str) -> list[dict]:
-        concept_scheme_uri = self.fetch_codelist_uri_for_task()
-        expression_filter = self.get_expressions_in_task_filter()
-        member_block = self.member_content_sparql_block("?s")
-        q = Template(
-            get_prefixes_for_query("rdf", "eli", "eli-dl", "oa", "epvoc", "dct", "skos", "schema") + """
-            SELECT ?s ?title ?description ?decision_basis ?content ?title_code ?work_type
-                   (GROUP_CONCAT(DISTINCT ?_member_text; separator="\\n\\n") AS ?member_content)
-            WHERE {
-                $expression_filter
-                GRAPH $target_graph {
-                    ?s rdf:type eli:Expression .
-                    OPTIONAL { ?s eli:title ?title }
-                    OPTIONAL { ?s eli:description ?description }
-                    OPTIONAL { ?s eli-dl:decision_basis ?decision_basis }
-                    OPTIONAL { ?s epvoc:expressionContent ?content }
-                    $member_block
-                }
-                FILTER NOT EXISTS {
-                    VALUES ?g { $target_graph $ai_graph }
-                    GRAPH ?g {
-                        ?ann a oa:Annotation ;
-                            oa:hasTarget ?s ;
-                            oa:motivatedBy oa:classifying ;
-                            oa:hasBody ?annotatedConcept .
-                    }
-                    GRAPH $public_graph {
-                        ?annotatedConcept skos:inScheme $concept_scheme_uri .
-                    }
-                }
-            }
-            GROUP BY ?s ?title ?description ?decision_basis ?content ?title_code ?work_type
-            """
-        ).substitute(
-            target_graph=sparql_escape_uri(target_graph),
-            ai_graph=sparql_escape_uri(GRAPHS["ai"]),
-            public_graph=sparql_escape_uri(GRAPHS["public"]),
-            concept_scheme_uri=sparql_escape_uri(concept_scheme_uri),
-            expression_filter=expression_filter,
-            member_block=member_block,
-        )
-
-        response = query(q, sudo=True)
-        results = []
-        for b in response.get("results", {}).get("bindings", []):
-            text = self.assemble_expression_text(b)
-            if text:
-                results.append({"uri": b["s"]["value"], "text": text})
-        return results
 
     def process(self):
         config = get_config()
@@ -144,7 +78,12 @@ class ClassifierAnnotatingTask(CodeListTask):
         codelist = self.fetch_codelist()
         label_to_uri = codelist.build_label_to_uri_map()
 
-        decisions = self.fetch_decisions_without_annotations_with_text(target_graph)
+        decisions = self.fetch_expressions_without_annotations_with_text(target_graph)
+        if not decisions:
+            raise RuntimeError(
+                f"No decisions without annotations found for task {self.task_uri} "
+                f"in graph {target_graph}; nothing to classify."
+            )
         logger.info(
             "Classifier annotation task %s contains %d decisions",
             self.task_uri,
@@ -190,28 +129,3 @@ class ClassifierAnnotatingTask(CodeListTask):
                 uri,
                 [label for label, _ in predictions],
             )
-
-    def create_output_container(self, resource: str) -> str:
-        container_id = str(uuid.uuid4())
-        container_uri = f"http://data.lblod.info/id/data-container/{container_id}"
-
-        q = Template(
-            get_prefixes_for_query("task", "nfo", "mu") +
-            """
-            INSERT DATA {
-                GRAPH $graph {
-                    $container a nfo:DataContainer ;
-                        mu:uuid $uuid ;
-                        task:hasResource $resource .
-                }
-            }
-            """
-        ).substitute(
-            graph=sparql_escape_uri(GRAPHS["data_containers"]),
-            container=sparql_escape_uri(container_uri),
-            uuid=sparql_escape_string(container_id),
-            resource=sparql_escape_uri(resource)
-        )
-
-        update(q, sudo=True)
-        return container_uri

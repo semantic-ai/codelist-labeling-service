@@ -45,6 +45,15 @@ CONCEPT_URI = "http://test.example.org/concepts/sdg-goal-1"
 CONCEPT_URI_2 = "http://test.example.org/concepts/sdg-goal-2"
 ANNOTATION_URI = "http://test.example.org/annotations/annotation-1"
 LANGUAGE_URI = "http://publications.europa.eu/resource/authority/language/ENG"
+
+# Actieplan / actie URIs
+ACTIEPLAN_WORK_URI = "http://test.example.org/works/actieplan-1"
+ACTIEPLAN_EXPRESSION_URI = "http://test.example.org/expressions/actieplan-1"
+ACTIE_WORK_1_URI = "http://test.example.org/works/actie-1"
+ACTIE_EXPRESSION_1_URI = "http://test.example.org/expressions/actie-1"
+ACTIE_WORK_2_URI = "http://test.example.org/works/actie-2"
+ACTIE_EXPRESSION_2_URI = "http://test.example.org/expressions/actie-2"
+VMM_ACTIEPLAN_TYPE = "http://lblod.data.gift/vocabularies/vmm/Actieplan"
 EXPRESSION_CONTENT = (
     "This policy promotes targeted investment in renewable energy infrastructure "
     "to reduce carbon emissions, lower household energy costs, and create "
@@ -451,6 +460,200 @@ def two_annotated_expressions():
                     {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
                 {sparql_escape_uri(CONCEPT_URI_2)}
                     {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
+            }}
+        }}
+    """)
+    yield
+
+
+# ---------------------------------------------------------------------------
+# Triplestore data fixtures  (Actieplan / Actie hierarchy)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def actieplan_with_unannotated_acties():
+    """
+    Inserts an actieplan (vmm:Actieplan work_type) with two member acties,
+    none of which have annotations.  fetch_decisions_without_annotations()
+    in actieplannen mode should return the actieplan expression URI.
+    """
+    sparql_update(f"""
+        INSERT DATA {{
+            GRAPH {sparql_escape_uri(GRAPHS["expressions"])} {{
+                {sparql_escape_uri(ACTIEPLAN_EXPRESSION_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actieplan content" .
+                {sparql_escape_uri(ACTIE_EXPRESSION_1_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actie 1 content" .
+                {sparql_escape_uri(ACTIE_EXPRESSION_2_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actie 2 content" .
+                {sparql_escape_uri(ACTIEPLAN_WORK_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIEPLAN_EXPRESSION_URI)} ;
+                    {sparql_escape_uri(NS["eli"] + "work_type")} {sparql_escape_uri(VMM_ACTIEPLAN_TYPE)} ;
+                    {sparql_escape_uri(NS["eli"] + "has_member")} {sparql_escape_uri(ACTIE_WORK_1_URI)} ;
+                    {sparql_escape_uri(NS["eli"] + "has_member")} {sparql_escape_uri(ACTIE_WORK_2_URI)} .
+                {sparql_escape_uri(ACTIE_WORK_1_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIE_EXPRESSION_1_URI)} .
+                {sparql_escape_uri(ACTIE_WORK_2_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIE_EXPRESSION_2_URI)} .
+            }}
+        }}
+    """)
+    yield
+
+
+@pytest.fixture
+def actieplan_with_one_annotated_actie():
+    """
+    Inserts an actieplan with two member acties, one of which has a
+    classifying annotation.  The actieplan is still incomplete so
+    fetch_decisions_without_annotations() should return it.
+    """
+    sparql_update(f"""
+        INSERT DATA {{
+            GRAPH {sparql_escape_uri(GRAPHS["expressions"])} {{
+                {sparql_escape_uri(ACTIEPLAN_EXPRESSION_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actieplan content" .
+                {sparql_escape_uri(ACTIE_EXPRESSION_1_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actie 1 content" .
+                {sparql_escape_uri(ACTIE_EXPRESSION_2_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actie 2 content" .
+                {sparql_escape_uri(ACTIEPLAN_WORK_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIEPLAN_EXPRESSION_URI)} ;
+                    {sparql_escape_uri(NS["eli"] + "work_type")} {sparql_escape_uri(VMM_ACTIEPLAN_TYPE)} ;
+                    {sparql_escape_uri(NS["eli"] + "has_member")} {sparql_escape_uri(ACTIE_WORK_1_URI)} ;
+                    {sparql_escape_uri(NS["eli"] + "has_member")} {sparql_escape_uri(ACTIE_WORK_2_URI)} .
+                {sparql_escape_uri(ACTIE_WORK_1_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIE_EXPRESSION_1_URI)} .
+                {sparql_escape_uri(ACTIE_WORK_2_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIE_EXPRESSION_2_URI)} .
+            }}
+            GRAPH {sparql_escape_uri(GRAPHS["ai"])} {{
+                <http://test.example.org/annotations/actie-ann-1>
+                    a {sparql_escape_uri(NS["oa"] + "Annotation")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(ACTIE_EXPRESSION_1_URI)} ;
+                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI)} .
+                {sparql_escape_uri(CONCEPT_URI)}
+                    {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
+            }}
+        }}
+    """)
+    yield
+
+
+@pytest.fixture
+def actieplan_fully_annotated():
+    """
+    Inserts an actieplan with two member acties, both of which have
+    classifying annotations.  fetch_decisions_without_annotations()
+    in actieplannen mode should NOT return this.
+    """
+    sparql_update(f"""
+        INSERT DATA {{
+            GRAPH {sparql_escape_uri(GRAPHS["expressions"])} {{
+                {sparql_escape_uri(ACTIEPLAN_EXPRESSION_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actieplan content" .
+                {sparql_escape_uri(ACTIE_EXPRESSION_1_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actie 1 content" .
+                {sparql_escape_uri(ACTIE_EXPRESSION_2_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actie 2 content" .
+                {sparql_escape_uri(ACTIEPLAN_WORK_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIEPLAN_EXPRESSION_URI)} ;
+                    {sparql_escape_uri(NS["eli"] + "work_type")} {sparql_escape_uri(VMM_ACTIEPLAN_TYPE)} ;
+                    {sparql_escape_uri(NS["eli"] + "has_member")} {sparql_escape_uri(ACTIE_WORK_1_URI)} ;
+                    {sparql_escape_uri(NS["eli"] + "has_member")} {sparql_escape_uri(ACTIE_WORK_2_URI)} .
+                {sparql_escape_uri(ACTIE_WORK_1_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIE_EXPRESSION_1_URI)} .
+                {sparql_escape_uri(ACTIE_WORK_2_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIE_EXPRESSION_2_URI)} .
+            }}
+            GRAPH {sparql_escape_uri(GRAPHS["ai"])} {{
+                <http://test.example.org/annotations/actie-ann-1>
+                    a {sparql_escape_uri(NS["oa"] + "Annotation")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(ACTIE_EXPRESSION_1_URI)} ;
+                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI)} .
+                <http://test.example.org/annotations/actie-ann-2>
+                    a {sparql_escape_uri(NS["oa"] + "Annotation")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasTarget")} {sparql_escape_uri(ACTIE_EXPRESSION_2_URI)} ;
+                    {sparql_escape_uri(NS["oa"] + "motivatedBy")} {sparql_escape_uri(NS["oa"] + "classifying")} ;
+                    {sparql_escape_uri(NS["oa"] + "hasBody")} {sparql_escape_uri(CONCEPT_URI_2)} .
+                {sparql_escape_uri(CONCEPT_URI)}
+                    {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
+                {sparql_escape_uri(CONCEPT_URI_2)}
+                    {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
+            }}
+        }}
+    """)
+    yield
+
+
+@pytest.fixture
+def standalone_acties_unannotated():
+    """
+    Inserts two standalone eli:Expression instances (not members of any
+    actieplan) without annotations.  Used for acties-mode tests.
+    """
+    sparql_update(f"""
+        INSERT DATA {{
+            GRAPH {sparql_escape_uri(GRAPHS["expressions"])} {{
+                {sparql_escape_uri(EXPRESSION_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "{EXPRESSION_CONTENT}" .
+                {sparql_escape_uri(EXPRESSION_URI_2)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "{EXPRESSION_CONTENT_2}" .
+            }}
+        }}
+    """)
+    yield
+
+
+@pytest.fixture
+def actieplan_and_standalone_actie():
+    """
+    Inserts an actieplan with one unannotated member actie AND one
+    standalone expression that is not a member of any actieplan.
+    Used to verify no double-processing across modes.
+    """
+    sparql_update(f"""
+        INSERT DATA {{
+            GRAPH {sparql_escape_uri(GRAPHS["expressions"])} {{
+                {sparql_escape_uri(ACTIEPLAN_EXPRESSION_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actieplan content" .
+                {sparql_escape_uri(ACTIE_EXPRESSION_1_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "Actie 1 content" .
+                {sparql_escape_uri(EXPRESSION_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Expression")} ;
+                    {sparql_escape_uri(NS["epvoc"] + "expressionContent")} "{EXPRESSION_CONTENT}" .
+                {sparql_escape_uri(ACTIEPLAN_WORK_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIEPLAN_EXPRESSION_URI)} ;
+                    {sparql_escape_uri(NS["eli"] + "work_type")} {sparql_escape_uri(VMM_ACTIEPLAN_TYPE)} ;
+                    {sparql_escape_uri(NS["eli"] + "has_member")} {sparql_escape_uri(ACTIE_WORK_1_URI)} .
+                {sparql_escape_uri(ACTIE_WORK_1_URI)}
+                    a {sparql_escape_uri(NS["eli"] + "Work")} ;
+                    {sparql_escape_uri(NS["eli"] + "is_realized_by")} {sparql_escape_uri(ACTIE_EXPRESSION_1_URI)} .
             }}
         }}
     """)

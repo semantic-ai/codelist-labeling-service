@@ -40,6 +40,9 @@ from src.task.codelist import Codelist, CodelistEntry
 from src.config import AppConfig, LlmConfig
 
 from tests.unit.conftest import (
+    ACTIE_EXPRESSION_1_URI,
+    ACTIE_EXPRESSION_2_URI,
+    ACTIEPLAN_EXPRESSION_URI,
     ANNOTATION_URI,
     CONCEPT_URI,
     CONCEPT_URI_2,
@@ -85,6 +88,7 @@ def annotating_task(mocker) -> ModelAnnotatingTask:
       • default two-entry codelist
       • get_config() and create_llm_client() mocked at the module level
       • _llm is a MagicMock whose return_value can be set per test
+      • fetch_member_expression_mapping mocked to return single-action mapping
     """
     mocker.patch("src.task.annotate.get_config", return_value=_make_config())
     mock_llm = MagicMock()
@@ -94,6 +98,11 @@ def annotating_task(mocker) -> ModelAnnotatingTask:
         task_uri=TASK_URI,
         source=EXPRESSION_URI,
         codelist_entries=_default_codelist(),
+    )
+    # Default: single action, maps own code to own URI
+    mocker.patch.object(
+        task, "fetch_member_expression_mapping",
+        return_value={"EXPR-1": EXPRESSION_URI},
     )
     return task
 
@@ -127,7 +136,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """A single matching label returned by the LLM produces one annotation."""
-        annotating_task._llm.return_value = ["Affordable and Clean Energy"]
+        annotating_task._llm.return_value = {"EXPR-1": ["Affordable and Clean Energy"]}
 
         annotating_task.process()
 
@@ -146,10 +155,9 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """Two matching labels produce two separate annotations."""
-        annotating_task._llm.return_value = [
-            "Affordable and Clean Energy",
-            "Climate Action",
-        ]
+        annotating_task._llm.return_value = {
+            "EXPR-1": ["Affordable and Clean Energy", "Climate Action"],
+        }
 
         annotating_task.process()
 
@@ -160,7 +168,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """The oa:hasTarget of every inserted annotation is the task's source URI."""
-        annotating_task._llm.return_value = ["Affordable and Clean Energy"]
+        annotating_task._llm.return_value = {"EXPR-1": ["Affordable and Clean Energy"]}
 
         annotating_task.process()
 
@@ -176,7 +184,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """The oa:hasBody of the annotation is the resolved SKOS concept URI."""
-        annotating_task._llm.return_value = ["Climate Action"]
+        annotating_task._llm.return_value = {"EXPR-1": ["Climate Action"]}
 
         annotating_task.process()
 
@@ -193,7 +201,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """Calling process() twice produces exactly one annotation (idempotent guard)."""
-        annotating_task._llm.return_value = ["Affordable and Clean Energy"]
+        annotating_task._llm.return_value = {"EXPR-1": ["Affordable and Clean Energy"]}
 
         annotating_task.process()
         annotating_task.process()
@@ -246,7 +254,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """A label not present in the codelist is silently ignored."""
-        annotating_task._llm.return_value = ["Unknown SDG Goal 99"]
+        annotating_task._llm.return_value = {"EXPR-1": ["Unknown SDG Goal 99"]}
 
         annotating_task.process()
 
@@ -255,34 +263,30 @@ class TestModelAnnotatingTaskProcess:
     def test_skips_annotation_when_llm_returns_empty_list(
         self, annotating_task, expression_content_triple
     ):
-        """An empty response list results in zero annotations."""
-        annotating_task._llm.return_value = []
+        """An empty response dict results in zero annotations."""
+        annotating_task._llm.return_value = {"EXPR-1": []}
 
         annotating_task.process()
 
         assert sparql_count_annotations(EXPRESSION_URI) == 0
 
-    def test_falls_back_to_random_label_when_llm_raises(
+    def test_raises_when_llm_fails_after_retries(
         self, annotating_task, expression_content_triple
     ):
         """
-        When the LLM call raises an exception, process() falls back to a
-        randomly selected label from the codelist and still inserts one
-        annotation.
+        When the LLM call raises an exception on all retries, process() raises
+        RuntimeError.
         """
         annotating_task._llm.side_effect = RuntimeError("LLM unavailable")
 
-        annotating_task.process()
-
-        # Exactly one annotation with some concept from the codelist
-        count = sparql_count_annotations(EXPRESSION_URI)
-        assert count == 1
+        with pytest.raises(RuntimeError, match="LLM call failed after"):
+            annotating_task.process()
 
     def test_llm_receives_codelist_labels_in_user_message(
         self, annotating_task, expression_content_triple
     ):
         """The user message passed to the LLM contains the codelist labels."""
-        annotating_task._llm.return_value = []
+        annotating_task._llm.return_value = {"EXPR-1": []}
 
         annotating_task.process()
 
@@ -295,7 +299,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """The user message passed to the LLM contains the fetched expression text."""
-        annotating_task._llm.return_value = []
+        annotating_task._llm.return_value = {"EXPR-1": []}
 
         annotating_task.process()
 
@@ -306,7 +310,7 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task, expression_content_triple
     ):
         """Logging does not reflect duplicate prompt construction or LLM calls."""
-        annotating_task._llm.return_value = []
+        annotating_task._llm.return_value = {"EXPR-1": []}
 
         annotating_task.process()
 
@@ -315,7 +319,7 @@ class TestModelAnnotatingTaskProcess:
         assert llm_input.user_message.count("CODE LIST:") == 1
         assert llm_input.user_message.count("DECISION TEXT:") == 1
         assert llm_input.user_message.count(EXPRESSION_CONTENT) == 1
-        assert llm_input.output_format == list[str]
+        assert llm_input.output_format == dict[str, list[str]]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -323,13 +327,15 @@ class TestModelAnnotatingTaskProcess:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestFetchDecisionsWithoutAnnotations:
+    """Tests for annotate_actions=True (acties mode) — standalone expressions."""
 
     def test_returns_unannotated_expression(
         self, batch_task, unannotated_expressions
     ):
         """Both expressions appear when neither has an annotation."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -339,8 +345,9 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, one_annotated_one_plain_expression
     ):
         """Only the expression without an annotation is returned."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -350,8 +357,9 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, two_annotated_expressions
     ):
         """Neither expression is returned when both have classifying annotations."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI not in result
@@ -359,8 +367,9 @@ class TestFetchDecisionsWithoutAnnotations:
 
     def test_returns_empty_list_when_no_expressions(self, batch_task):
         """Returns an empty list when no eli:Expression triples exist."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert result == []
@@ -369,8 +378,9 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """Every returned value is a plain string (the expression URI)."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert all(isinstance(uri, str) for uri in result)
@@ -394,8 +404,9 @@ class TestFetchDecisionsWithoutAnnotations:
             }}
         """)
 
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
-            concept_scheme_uri=CONCEPT_SCHEME_URI
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -404,9 +415,10 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """When sh:targetNode is used, only the specified nodes are returned."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
             target_nodes=[EXPRESSION_URI],
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -416,9 +428,10 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """When sh:targetClass is used, all instances of that class are returned."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
             target_classes=["http://data.europa.eu/eli/ontology#Expression"],
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -428,10 +441,11 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """When both sh:targetNode and sh:targetClass are used, results are the union."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
             target_nodes=[EXPRESSION_URI],
             target_classes=["http://data.europa.eu/eli/ontology#Expression"],
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
@@ -441,12 +455,108 @@ class TestFetchDecisionsWithoutAnnotations:
         self, batch_task, unannotated_expressions
     ):
         """Without shape targets, defaults to eli:Expression (same as test_returns_unannotated_expression)."""
-        result = ModelBatchAnnotatingTask.fetch_decisions_without_annotations(
+        result = batch_task.fetch_decisions_without_annotations(
             concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
         )
 
         assert EXPRESSION_URI in result
         assert EXPRESSION_URI_2 in result
+
+    def test_excludes_actie_members_of_actieplan(
+        self, batch_task, actieplan_and_standalone_actie
+    ):
+        """Acties that are members of an actieplan are excluded to prevent double-processing."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+            annotate_actions=True,
+        )
+
+        # Standalone expression should be included
+        assert EXPRESSION_URI in result
+        # Actie that is a member of an actieplan should be excluded
+        assert ACTIE_EXPRESSION_1_URI not in result
+        # The actieplan itself should also be excluded (it's not standalone)
+        assert ACTIEPLAN_EXPRESSION_URI not in result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ModelBatchAnnotatingTask – fetch_decisions_without_annotations() actieplannen mode
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestFetchDecisionsActieplannenMode:
+    """Tests for annotate_actions=False (default, actieplannen mode)."""
+
+    def test_returns_actieplan_with_unannotated_acties(
+        self, batch_task, actieplan_with_unannotated_acties
+    ):
+        """Actieplan is returned when all member acties are unannotated."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert ACTIEPLAN_EXPRESSION_URI in result
+
+    def test_returns_actieplan_with_partially_annotated_acties(
+        self, batch_task, actieplan_with_one_annotated_actie
+    ):
+        """Actieplan is returned when at least one member actie is unannotated."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert ACTIEPLAN_EXPRESSION_URI in result
+
+    def test_excludes_fully_annotated_actieplan(
+        self, batch_task, actieplan_fully_annotated
+    ):
+        """Actieplan is NOT returned when all member acties have annotations."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert ACTIEPLAN_EXPRESSION_URI not in result
+
+    def test_does_not_return_standalone_expressions(
+        self, batch_task, standalone_acties_unannotated
+    ):
+        """Standalone expressions (no actieplan work_type) are not returned."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert EXPRESSION_URI not in result
+        assert EXPRESSION_URI_2 not in result
+
+    def test_does_not_return_member_acties_directly(
+        self, batch_task, actieplan_with_unannotated_acties
+    ):
+        """Member actie expressions are not returned — only the actieplan is."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert ACTIE_EXPRESSION_1_URI not in result
+        assert ACTIE_EXPRESSION_2_URI not in result
+        assert ACTIEPLAN_EXPRESSION_URI in result
+
+    def test_returns_empty_when_no_actieplannen(self, batch_task):
+        """Returns empty list when no actieplannen exist."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert result == []
+
+    def test_returns_list_of_strings(
+        self, batch_task, actieplan_with_unannotated_acties
+    ):
+        """Every returned value is a plain string (the expression URI)."""
+        result = batch_task.fetch_decisions_without_annotations(
+            concept_scheme_uri=CONCEPT_SCHEME_URI,
+        )
+
+        assert all(isinstance(uri, str) for uri in result)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -694,7 +804,7 @@ class TestFetchTextWithPropertyPath:
         """process() uses fetch_text_with_property_path when _property_path_for_text is set."""
         epvoc_content = "https://data.europarl.europa.eu/def/epvoc#expressionContent"
         annotating_task._property_path_for_text = epvoc_content
-        annotating_task._llm.return_value = ["Affordable and Clean Energy"]
+        annotating_task._llm.return_value = {"EXPR-1": ["Affordable and Clean Energy"]}
 
         annotating_task.process()
 
@@ -705,7 +815,7 @@ class TestFetchTextWithPropertyPath:
     ):
         """process() falls back to fetch_data() when _property_path_for_text is None."""
         annotating_task._property_path_for_text = None
-        annotating_task._llm.return_value = ["Affordable and Clean Energy"]
+        annotating_task._llm.return_value = {"EXPR-1": ["Affordable and Clean Energy"]}
 
         annotating_task.process()
 
@@ -815,3 +925,122 @@ class TestFetchShapeTargets:
         target_nodes, target_classes = batch_task.fetch_shape_targets()
         assert EXPRESSION_URI in target_nodes
         assert eli_expression in target_classes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ModelAnnotatingTask – _normalize_llm_response()
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestNormalizeLlmResponse:
+
+    def test_passes_through_correct_dict_response(self):
+        """A well-formed dict response is returned as-is."""
+        response = {"ACT-1": ["Code A", "Code B"], "ACT-2": ["Code C"]}
+        result = ModelAnnotatingTask._normalize_llm_response(response, ["ACT-1", "ACT-2"])
+        assert result == {"ACT-1": ["Code A", "Code B"], "ACT-2": ["Code C"]}
+
+    def test_handles_flat_list_fallback(self):
+        """A flat list is assigned to the first action code."""
+        response = ["Code A", "Code B"]
+        result = ModelAnnotatingTask._normalize_llm_response(response, ["ACT-1", "ACT-2"])
+        assert result == {"ACT-1": ["Code A", "Code B"]}
+
+    def test_handles_empty_flat_list(self):
+        """An empty flat list with action codes returns empty dict for first action."""
+        response = []
+        result = ModelAnnotatingTask._normalize_llm_response(response, ["ACT-1"])
+        assert result == {"ACT-1": []}
+
+    def test_handles_case_insensitive_keys(self):
+        """Keys are matched case-insensitively to action codes."""
+        response = {"act-1": ["Code A"]}
+        result = ModelAnnotatingTask._normalize_llm_response(response, ["ACT-1"])
+        assert result == {"ACT-1": ["Code A"]}
+
+    def test_handles_whitespace_in_keys(self):
+        """Leading/trailing whitespace in keys is stripped."""
+        response = {"  ACT-1  ": ["Code A"]}
+        result = ModelAnnotatingTask._normalize_llm_response(response, ["ACT-1"])
+        assert result == {"ACT-1": ["Code A"]}
+
+    def test_handles_string_value_instead_of_list(self):
+        """A string value (instead of list) is wrapped in a list."""
+        response = {"ACT-1": "Code A"}
+        result = ModelAnnotatingTask._normalize_llm_response(response, ["ACT-1"])
+        assert result == {"ACT-1": ["Code A"]}
+
+    def test_skips_unknown_keys(self):
+        """Keys not matching any action code are skipped with warning."""
+        response = {"UNKNOWN": ["Code A"], "ACT-1": ["Code B"]}
+        result = ModelAnnotatingTask._normalize_llm_response(response, ["ACT-1"])
+        assert result == {"ACT-1": ["Code B"]}
+
+    def test_handles_prefix_match_on_keys(self):
+        """Keys that are a prefix of an action code are resolved."""
+        response = {"ACT": ["Code A"]}
+        result = ModelAnnotatingTask._normalize_llm_response(response, ["ACT-1"])
+        assert result == {"ACT-1": ["Code A"]}
+
+    def test_handles_empty_dict_response(self):
+        """An empty dict response returns empty dict."""
+        result = ModelAnnotatingTask._normalize_llm_response({}, ["ACT-1"])
+        assert result == {}
+
+    def test_handles_non_dict_non_list_response(self):
+        """Non-dict/non-list response returns empty dict."""
+        result = ModelAnnotatingTask._normalize_llm_response("unexpected", ["ACT-1"])
+        assert result == {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ModelAnnotatingTask – multi-action annotation
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestMultiActionAnnotation:
+
+    def test_annotates_multiple_member_expressions(
+        self, mocker, expression_content_triple
+    ):
+        """When an actieplan has multiple members, each gets its own annotations."""
+        member_uri_1 = "http://test.example.org/expressions/member-1"
+        member_uri_2 = "http://test.example.org/expressions/member-2"
+
+        mocker.patch("src.task.annotate.get_config", return_value=_make_config())
+        mock_llm = MagicMock()
+        mocker.patch("src.task.annotate.create_llm_client", return_value=mock_llm)
+
+        task = ModelAnnotatingTask(
+            task_uri=TASK_URI,
+            source=EXPRESSION_URI,
+            codelist_entries=_default_codelist(),
+        )
+        mocker.patch.object(
+            task, "fetch_member_expression_mapping",
+            return_value={"ACT-1": member_uri_1, "ACT-2": member_uri_2},
+        )
+
+        mock_llm.return_value = {
+            "ACT-1": ["Affordable and Clean Energy"],
+            "ACT-2": ["Climate Action"],
+        }
+
+        task.process()
+
+        assert sparql_count_annotations(member_uri_1) == 1
+        assert sparql_count_annotations(member_uri_2) == 1
+
+    def test_action_codes_included_in_prompt(
+        self, annotating_task, expression_content_triple
+    ):
+        """The per-action user message includes the action codes."""
+        annotating_task.fetch_member_expression_mapping.return_value = {
+            "ACT-1": EXPRESSION_URI,
+            "ACT-2": "http://test.example.org/expressions/member-2",
+        }
+        annotating_task._llm.return_value = {"ACT-1": [], "ACT-2": []}
+
+        annotating_task.process()
+
+        llm_input = annotating_task._llm.call_args[0][0]
+        assert "ACT-1" in llm_input.user_message
+        assert "ACT-2" in llm_input.user_message
