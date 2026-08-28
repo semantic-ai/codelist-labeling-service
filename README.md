@@ -59,7 +59,7 @@ Update `config.json` and restart the service:
 {
   "llm": {
     "provider": "mistralai",
-    "model_name": "mistral-medium-latest",
+    "model_name": "mistral-medium-3-5",
     "api_key": "your-mistral-api-key",
     "base_url": "https://api.mistral.ai/v1",
     "temperature": 0.1,
