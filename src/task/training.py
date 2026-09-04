@@ -9,6 +9,8 @@ from ..classifier.train import train
 from ..config import get_config
 from .codelist import CodeListTask, Codelist
 
+TRAINING_COMPONENT = "http://lblod.data.gift/id/components/codelist-training/v1.0.0"
+
 
 class ClassifierTrainingTask(CodeListTask):
     """Task that trains a classifier for the available annotations in the triple store."""
