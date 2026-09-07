@@ -17,6 +17,7 @@ from decide_ai_service_base.util import get_agent_uri
 from pydantic import BaseModel, Field
 from enum import Enum
 
+IMPACT_COMPONENT = "http://lblod.data.gift/id/components/impact-assessment/v1.0.0"
 
 class ImpactDirection(str, Enum):
     POSITIVE = "positive"
@@ -332,7 +333,7 @@ class ImpactAssessmentTask(CodeListTask):
             annotation_uri=sparql_escape_uri(annotation_uri),
             assessment=sparql_escape_uri(mapping[assessment.impact_direction]),
             impact_scheme=sparql_escape_uri("http://mu.semte.ch/vocabularies/ext/impact"),
-            agent=sparql_escape_uri(get_agent_uri("impact_annotator"))
+            agent=sparql_escape_uri(get_agent_uri(IMPACT_COMPONENT))
             )
 
 

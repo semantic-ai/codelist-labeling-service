@@ -20,6 +20,7 @@ from ..llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
 from .codelist import Codelist, CodelistEntry, CodeListTask
 from ..config import get_config
 
+ANNOTATOR_COMPONENT = "http://lblod.data.gift/id/components/codelist-annotation/v1.0.0"
 
 class ModelAnnotatingTask(CodeListTask):
     """Task that links the correct code from a list to text."""
@@ -139,7 +140,7 @@ class ModelAnnotatingTask(CodeListTask):
                 self.task_uri,
                 self.source,
                 concept_uri,
-                get_agent_uri("model_annotator"),
+                get_agent_uri(ANNOTATOR_COMPONENT),
                 AGENT_TYPES["ai_component"]
             )
             annotation_uri = annotation.add_to_triplestore_if_not_exists()
@@ -165,7 +166,7 @@ class ModelAnnotatingTask(CodeListTask):
                 self.task_uri,
                 self.source,
                 uri,
-                get_agent_uri("model_annotator"),
+                get_agent_uri(ANNOTATOR_COMPONENT),
                 AGENT_TYPES["ai_component"]
             )
             annotation_uri = annotation.add_to_triplestore_if_not_exists()
@@ -333,7 +334,7 @@ class ModelBatchAnnotatingTask(CodeListTask):
         }
         """).substitute(
             expression_filter=expression_filter,
-            agent_uri=sparql_escape_uri(get_agent_uri("model_annotator")),
+            agent_uri=sparql_escape_uri(get_agent_uri(ANNOTATOR_COMPONENT)),
             target_graph=sparql_escape_uri(target_graph),
             ai_graph=sparql_escape_uri(GRAPHS['ai']),
             concept_graph=sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public")),

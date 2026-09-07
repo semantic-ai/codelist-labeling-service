@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks
 from decide_ai_service_base.task import Task
 from decide_ai_service_base.util import wait_for_triplestore, TaskProcessor, process_open_tasks, fail_busy_and_scheduled_tasks, write_agent_info
 from decide_ai_service_base.schema import NotificationResponse, TaskOperationsResponse
-from src.task import ModelAnnotatingTask, ModelBatchAnnotatingTask, ClassifierTrainingTask, ImpactAssessmentTask, ClassifierAnnotatingTask
+from src.task import ModelAnnotatingTask, ModelBatchAnnotatingTask, ClassifierTrainingTask, ImpactAssessmentTask, ClassifierAnnotatingTask, ANNOTATOR_COMPONENT, TRAINING_COMPONENT, IMPACT_COMPONENT, CLASSIFY_COMPONENT
 
 # Configure root logger level from LOG_LEVEL env var.
 # The mu-python-template only configures its own 'MU_PYTHON_TEMPLATE_LOGGER',
@@ -25,9 +25,10 @@ _open_tasks_lock = Lock()
 async def startup_event():
     wait_for_triplestore()
     fail_busy_and_scheduled_tasks()
-    write_agent_info("http://lblod.data.gift/id/components/codelist-labeling/v1.0.0", "impact_annotator")
-    write_agent_info("http://lblod.data.gift/id/components/codelist-labeling/v1.0.0", "model_annotator")
-    write_agent_info("http://lblod.data.gift/id/components/codelist-labeling/v1.0.0", "classifier_annotator")
+    write_agent_info("http://lblod.data.gift/id/components/codelist-labeling/v1.0.0", IMPACT_COMPONENT)
+    write_agent_info("http://lblod.data.gift/id/components/codelist-labeling/v1.0.0", ANNOTATOR_COMPONENT)
+    write_agent_info("http://lblod.data.gift/id/components/codelist-labeling/v1.0.0", CLASSIFY_COMPONENT)
+    write_agent_info("http://lblod.data.gift/id/components/codelist-labeling/v1.0.0", TRAINING_COMPONENT)
 
     process_open_tasks(_open_tasks_lock)
 

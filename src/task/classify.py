@@ -13,6 +13,8 @@ from .codelist import CodeListTask
 from ..classifier.predict import predict as classifier_predict
 from ..config import get_config
 
+CLASSIFY_COMPONENT = "http://lblod.data.gift/id/components/codelist-classifier/v1.0.0"
+
 
 class ClassifierAnnotatingTask(CodeListTask):
     """Runs a trained HuggingFace classifier on unlabeled decisions to produce codelist annotations at scale."""
@@ -190,7 +192,7 @@ class ClassifierAnnotatingTask(CodeListTask):
                     self.task_uri,
                     uri,
                     concept_uri,
-                    get_agent_uri("classifier_annotator"),
+                    get_agent_uri(CLASSIFY_COMPONENT),
                     AGENT_TYPES["ai_component"],
                 )
                 annotation_uri = annotation.add_to_triplestore_if_not_exists()
