@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from helpers import query, update, logger
 from escape_helpers import sparql_escape_uri
@@ -46,6 +47,7 @@ class ClassifierTrainingTask(CodeListTask):
             decisions,
             codelist_entries.get_labels(),
             ml_config.huggingface_output_model_id,
+            concept_scheme_uri=codelist_entries.concept_scheme_uri,
             transformer=ml_config.transformer,
             learning_rate=ml_config.learning_rate,
             epochs=ml_config.epochs,
@@ -70,12 +72,17 @@ class ClassifierTrainingTask(CodeListTask):
         return file_path
 
     @staticmethod
-    def convert_classes_to_original_names(decisions: list[dict[str, str | list[str]]], codelist: Codelist):
+    def convert_classes_to_original_names(decisions: list[dict], codelist: Codelist):
         uri_to_label = codelist.build_uri_to_label_map()
         for decision in decisions:
             decision["classes"] = [
                 uri_to_label.get(c, c) for c in decision["classes"]
             ]
+            if "label_votes" in decision:
+                decision["label_votes"] = {
+                    uri_to_label.get(class_uri, class_uri): votes
+                    for class_uri, votes in decision["label_votes"].items()
+                }
         return decisions
     
     @staticmethod
@@ -117,6 +124,27 @@ class ClassifierTrainingTask(CodeListTask):
         excluded = excluded_classes or set()
         return [c for c in classes_concat.split("|") if c and c not in excluded]
 
+    @staticmethod
+    def _keep_approved_labels(sample: dict[str, Any]) -> dict[str, Any]:
+        """Return a copy containing only labels with at least one approval vote."""
+
+        approved_vote_uri = "http://mu.semte.ch/vocabularies/ext/annotation-review#approve"
+
+        approved_classes = [
+            class_uri
+            for class_uri in sample["classes"]
+            if approved_vote_uri in sample["label_votes"].get(class_uri, [])
+        ]
+        return {
+            **sample,
+            "classes": approved_classes,
+            "label_votes": {
+                class_uri: sample["label_votes"][class_uri]
+                for class_uri in approved_classes
+            },
+        }
+
+
     def _build_training_sample(
         self,
         binding: dict,
@@ -131,15 +159,23 @@ class ClassifierTrainingTask(CodeListTask):
         }
 
 
-    def fetch_actions_with_classes(self, include_siblings: bool = False) -> list[dict[str, str | list[str]]]:
+    def fetch_actions_with_classes(self, include_siblings: bool = False) -> list[dict]:
         """Fetch annotated actions (member expressions) with parent actieplan context.
 
         Returns one sample per action expression that has classifying annotations,
-        including the action's own text and the parent actieplan's title/description.
+        including the action's own text, parent plan context, and assessment votes
+        associated with each label.
         """
         concept_scheme_uri = sparql_escape_uri(self.fetch_codelist_uri_for_task())
         ai_graph = sparql_escape_uri(GRAPHS['ai'])
         public_graph = sparql_escape_uri(GRAPHS.get("public", "http://mu.semte.ch/graphs/public"))
+
+        human_validation_graph = sparql_escape_uri(
+            GRAPHS.get(
+                "human_validation",
+                "http://mu.semte.ch/graphs/public/human-validation",
+            )
+        )
 
         sibling_select = ""
         sibling_block = ""
@@ -160,46 +196,48 @@ class ClassifierTrainingTask(CodeListTask):
         no_match_uri = "http://mu.semte.ch/vocabularies/ext/no-match-found"
 
         q = get_prefixes_for_query("rdf", "eli", "oa", "epvoc", "skos", "schema") + f"""
-        SELECT ?action ?classes
+        SELECT ?action ?body ?voteLabel
                ?action_code ?action_title ?action_description ?action_content
                ?plan_title ?plan_description ?plan_code
                {sibling_select}
         WHERE {{
+            GRAPH {ai_graph} {{
+                ?ann a oa:Annotation ;
+                     oa:hasTarget ?action ;
+                     oa:motivatedBy oa:classifying ;
+                     oa:hasBody ?body .
+            }}
+            OPTIONAL {{
+                GRAPH {human_validation_graph} {{
+                    ?review a oa:Annotation ;
+                            oa:motivatedBy oa:assessing ;
+                            oa:hasTarget ?ann ;
+                            oa:hasBody ?voteLabel .
+                }}
+            }}
             {{
-                SELECT ?action (GROUP_CONCAT(DISTINCT STR(?body); separator="|") AS ?classes)
-                WHERE {{
-                    GRAPH {ai_graph} {{
-                        ?ann a oa:Annotation ;
-                             oa:hasTarget ?action ;
-                             oa:motivatedBy oa:classifying ;
-                             oa:hasBody ?body .
-                    }}
-                    {{
+                GRAPH {public_graph} {{
+                    ?body a skos:Concept ;
+                          skos:inScheme ?scheme .
+                }}
+                VALUES ?scheme {{ {concept_scheme_uri} }}
+            }}
+            UNION
+            {{
+                GRAPH {ai_graph} {{
+                    ?ann oa:hasBody <{no_match_uri}> .
+                    ?ann oa:hasTarget ?action .
+                    FILTER NOT EXISTS {{
+                        ?other_ann a oa:Annotation ;
+                            oa:hasTarget ?action ;
+                            oa:motivatedBy oa:classifying ;
+                            oa:hasBody ?real_body .
                         GRAPH {public_graph} {{
-                            ?body a skos:Concept ;
-                                  skos:inScheme ?scheme .
-                        }}
-                        VALUES ?scheme {{ {concept_scheme_uri} }}
-                    }}
-                    UNION
-                    {{
-                        GRAPH {ai_graph} {{
-                            ?ann oa:hasBody <{no_match_uri}> .
-                            ?ann oa:hasTarget ?action .
-                            FILTER NOT EXISTS {{
-                                ?other_ann a oa:Annotation ;
-                                    oa:hasTarget ?action ;
-                                    oa:motivatedBy oa:classifying ;
-                                    oa:hasBody ?real_body .
-                                GRAPH {public_graph} {{
-                                    ?real_body a skos:Concept ;
-                                              skos:inScheme {concept_scheme_uri} .
-                                }}
-                            }}
+                            ?real_body a skos:Concept ;
+                                      skos:inScheme {concept_scheme_uri} .
                         }}
                     }}
                 }}
-                GROUP BY ?action
             }}
 
             GRAPH ?g {{
@@ -225,7 +263,7 @@ class ClassifierTrainingTask(CodeListTask):
                 {sibling_block}
             }}
         }}
-        GROUP BY ?action ?classes
+        GROUP BY ?action ?body ?voteLabel
                  ?action_code ?action_title ?action_description ?action_content
                  ?plan_title ?plan_description ?plan_code
         """
@@ -233,16 +271,32 @@ class ClassifierTrainingTask(CodeListTask):
         res = query(q, sudo=True)
         bindings = res.get("results", {}).get("bindings", [])
 
-        excluded_classes = {no_match_uri}
-        return [
-            self._build_training_sample(
-                b,
-                decision_key="action",
-                text=self._assemble_action_text(b),
-                excluded_classes=excluded_classes,
+        samples_by_action: dict[str, dict] = {}
+        for binding in bindings:
+            action_uri = binding["action"]["value"]
+            sample = samples_by_action.setdefault(
+                action_uri,
+                {
+                    "decision": action_uri,
+                    "classes": [],
+                    "label_votes": {},
+                    "text": self._assemble_action_text(binding),
+                },
             )
-            for b in bindings
-        ]
+
+            class_uri = binding.get("body", {}).get("value", "")
+            if not class_uri or class_uri == no_match_uri:
+                continue
+
+            if class_uri not in sample["classes"]:
+                sample["classes"].append(class_uri)
+
+            votes = sample["label_votes"].setdefault(class_uri, [])
+            vote_uri = binding.get("voteLabel", {}).get("value", "")
+            if vote_uri and vote_uri not in votes:
+                votes.append(vote_uri)
+
+        return list(samples_by_action.values())
 
     def fetch_decisions_with_classes(self) -> list[dict[str, str | list[str]]]:
         expression_filter = self.get_expressions_in_task_filter("?decision")

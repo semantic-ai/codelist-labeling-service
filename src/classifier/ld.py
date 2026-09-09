@@ -1,99 +1,114 @@
+import math
 import uuid
-import pytz
-from string import Template
 from datetime import datetime
-from escape_helpers import sparql_escape_uri, sparql_escape_string, sparql_escape_float, sparql_escape_datetime
-from decide_ai_service_base.sparql_config import get_prefixes_for_query, GRAPHS, SPARQL_PREFIXES
+from decimal import Decimal, InvalidOperation
+from urllib.parse import quote
+
+import pytz
+from escape_helpers import sparql_escape_uri, sparql_escape_string
+from decide_ai_service_base.sparql_config import get_prefixes_for_query, GRAPHS
+
+
+INSTANCE_BASE = "http://lblod.data.gift/id"
+AI_MODEL_BASE = f"{INSTANCE_BASE}/ai-models"
+SOURCE_CODE_BASE = f"{INSTANCE_BASE}/source-codes"
+INPUT_BASE = f"{INSTANCE_BASE}/inputs"
+OUTPUT_BASE = f"{INSTANCE_BASE}/outputs"
+QUALITY_MEASUREMENT_BASE = f"{INSTANCE_BASE}/quality-measurements"
+METRIC_BASE = f"{INSTANCE_BASE}/metrics"
+DIMENSION_BASE = f"{INSTANCE_BASE}/dims"
+
+METRIC_URIS = {
+    "eval_accuracy": f"{METRIC_BASE}/AccuracyMetric",
+    "eval_precision": f"{METRIC_BASE}/PrecisionMetric",
+    "eval_recall": f"{METRIC_BASE}/RecallMetric",
+    "eval_f1": f"{METRIC_BASE}/F1ScoreMetric",
+}
 
 
 def build_airo_model_insert_query(
     hub_model_id: str,
     commit_oid: str,
-    code_git_sha: str,
     hf_repo_url: str,
-    hf_tree_url: str,
-    source_repo_url: str,
-    results: dict
+    results: dict,
+    concept_scheme_uri: str,
 ) -> str:
-    base = SPARQL_PREFIXES["airo"]
     prefixes = get_prefixes_for_query(
-        "dcterms", "dqv", "sd", "airo", "schema", "xsd", "rdf")
+        "dcterms", "dqv", "sd", "airo", "schema", "xsd", "rdf", "rdfs", "ext")
 
-    model_uri = f"{base}/model/{hub_model_id}"
-    version_uri = f"{base}/version/{commit_oid}"
-    code_uri = f"{base}/code/{commit_oid}"
-    input_uri = f"{base}/modelinput/text"
-    modelfiles_uri = f"{base}/modelfiles/{hub_model_id}"
-    source_code_uri = f"{base}/sourcecode/lblod-text-classifier"
+    model_slug = quote(hub_model_id, safe="")
+    model_uri = f"{AI_MODEL_BASE}/{model_slug}"
+    source_code_uri = f"{SOURCE_CODE_BASE}/{model_slug}"
+    input_uri = f"{INPUT_BASE}/text-input"
+    output_uri = f"{OUTPUT_BASE}/{model_slug}"
+    graph_uri = sparql_escape_uri(GRAPHS["ai"])
 
-    published_literal = sparql_escape_datetime(
-        datetime.now(tz=pytz.timezone("Europe/Brussels"))
-    )
+    published_date = datetime.now(tz=pytz.timezone("Europe/Brussels")).date().isoformat()
+    published_literal = f'"{published_date}"^^xsd:date'
 
     qm_uris = []
     qm_nodes_parts = []
-    for metric_name, metric_value in results.items():
-        qm_uri = f"{base}/qualitymeasurement/{uuid.uuid4()}"
-        metric_uri = f"{base}/metric/{metric_name}"
+    for metric_name, metric_uri in METRIC_URIS.items():
+        if metric_name not in results:
+            continue
+        metric_value = results[metric_name]
+        if isinstance(metric_value, bool) or not isinstance(metric_value, (int, float, Decimal)):
+            raise ValueError(f"Invalid value for {metric_name}: {metric_value!r}")
+        if isinstance(metric_value, float) and not math.isfinite(metric_value):
+            raise ValueError(f"Invalid value for {metric_name}: {metric_value!r}")
+        try:
+            decimal_value = Decimal(str(metric_value))
+        except (InvalidOperation, ValueError):
+            raise ValueError(f"Invalid value for {metric_name}: {metric_value!r}") from None
+        if not decimal_value.is_finite():
+            raise ValueError(f"Invalid value for {metric_name}: {metric_value!r}")
+
+        qm_uri = f"{QUALITY_MEASUREMENT_BASE}/{uuid.uuid4()}"
         qm_uris.append(sparql_escape_uri(qm_uri))
         qm_nodes_parts.append(f"""
-  {sparql_escape_uri(qm_uri)} dqv:isMeasurementOf {sparql_escape_uri(metric_uri)} ;
-      dqv:value {sparql_escape_float(metric_value)} .""")
+  {sparql_escape_uri(qm_uri)} a dqv:QualityMeasurement ;
+      dqv:isMeasurementOf {sparql_escape_uri(metric_uri)} ;
+      dqv:value \"{format(decimal_value, 'f')}\"^^xsd:decimal .""")
 
-    qm_list = ",\n        ".join(qm_uris) if qm_uris else ""
+    qm_line = f"dqv:hasQualityMeasurement {', '.join(qm_uris)} ;" if qm_uris else ""
     qm_nodes = "".join(qm_nodes_parts)
 
-    tpl = Template(prefixes + """
-INSERT DATA {
-  GRAPH ${graph_uri} {  
-    ${model_uri} a airo:AIModel ;
-        dcterms:source ${hf_tree_anyuri} ;
-        dcterms:title ${hub_model_id_str} ;
-        ${qm_line}
-        airo:hasInput ${input_uri} ;
-        airo:hasVersion ${version_uri} ;
-        sd:dataPublished ${published_literal} ;
-        sd:hasVersion ${code_uri} .
+    metric_definition = f"""
+    {sparql_escape_uri(METRIC_URIS['eval_accuracy'])} a dqv:Metric ;
+        rdfs:label \"Accuracy\" ;
+        rdfs:comment \"The aggregate accuracy of the codelist classifier.\" ;
+        dqv:expectedDataType xsd:decimal ;
+        dqv:inDimension {sparql_escape_uri(f'{DIMENSION_BASE}/Accuracy')} .
+"""
 
-    ${code_uri} a sd:SoftwareVersion ;
-        sd:hasSourceCode ${source_code_uri} ;
-        sd:hasVersionId ${code_git_sha_str} .
+    return prefixes + f"""
+INSERT DATA {{
+    GRAPH {graph_uri} {{
+    {sparql_escape_uri(model_uri)} a airo:AIModel, sd:SoftwareVersion ;
+        ext:classificationLevel {sparql_escape_uri(f'{INSTANCE_BASE}/concept/ai-model-level/local-os-llm')} ;
+        schema:datePublished {published_literal} ;
+        sd:hasSourceCode {sparql_escape_uri(source_code_uri)} ;
+        sd:hasVersionId {sparql_escape_string(commit_oid)} ;
+        airo:hasInput {sparql_escape_uri(input_uri)} ;
+        airo:producesOutput {sparql_escape_uri(output_uri)} ;
+        {qm_line}
+        .
 
-    ${modelfiles_uri} a sd:SourceCode ;
-        schema:codeRepository ${hf_repo_anyuri} .
+    {sparql_escape_uri('http://lblod.data.gift/id/components/codelist-classifier/v1.0.0')} airo:hasModel {sparql_escape_uri(model_uri)} .
 
-    ${input_uri} dcterms:type ${input_type_str} .
+    {sparql_escape_uri(input_uri)} a airo:Input ;
+        dcterms:type \"string\" .
 
-    ${source_code_uri} a sd:SourceCode ;
-        schema:codeRepository ${source_repo_anyuri} .
+    {sparql_escape_uri(output_uri)} a airo:Output ;
+        rdfs:label \"Codelist classifications\" ;
+        ext:forConceptScheme {sparql_escape_uri(concept_scheme_uri)} .
 
-    ${version_uri} a airo:Version ;
-        sd:hasSourceCode ${modelfiles_uri} ;
-        sd:hasVersionId ${commit_oid_str} .
+    {sparql_escape_uri(source_code_uri)} a sd:SourceCode ;
+        schema:codeRepository {sparql_escape_uri(hf_repo_url)} .
 
-${qm_nodes}
-  }
-}
-""")
+{metric_definition}
 
-    query = tpl.substitute(
-        graph_uri=sparql_escape_uri(GRAPHS["ai"]),
-        model_uri=sparql_escape_uri(model_uri),
-        hf_tree_anyuri=sparql_escape_uri(hf_tree_url),
-        hub_model_id_str=sparql_escape_string(hub_model_id),
-        qm_line=(f"dqv:QualityMeasurement {qm_list} ;" if qm_list else ""),
-        input_uri=sparql_escape_uri(input_uri),
-        version_uri=sparql_escape_uri(version_uri),
-        published_literal=published_literal,
-        code_uri=sparql_escape_uri(code_uri),
-        source_code_uri=sparql_escape_uri(source_code_uri),
-        code_git_sha_str=sparql_escape_string(code_git_sha),
-        modelfiles_uri=sparql_escape_uri(modelfiles_uri),
-        hf_repo_anyuri=sparql_escape_uri(hf_repo_url),
-        input_type_str=sparql_escape_string("string"),
-        source_repo_anyuri=sparql_escape_uri(source_repo_url),
-        commit_oid_str=sparql_escape_string(commit_oid),
-        qm_nodes=qm_nodes
-    )
-
-    return query
+{qm_nodes}
+    }}
+}}
+"""

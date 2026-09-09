@@ -56,6 +56,7 @@ def train(
         decisions: list[dict[str, str | list[str]]],
         labels: list[str],
         model_id: str,
+        concept_scheme_uri: str,
         transformer: str = "distilbert/distilbert-base-uncased",
         learning_rate: float = 2e-5,
         epochs: int = 2,
@@ -153,11 +154,9 @@ def train(
             query_str = build_airo_model_insert_query(
                 hub_model_id=model_id,
                 commit_oid=commit_info.oid,
-                code_git_sha=repo.head.object.hexsha,
                 hf_repo_url=commit_info.repo_url.url,
-                hf_tree_url=f"{commit_info.repo_url.url}/tree/main/",
-                source_repo_url=repo.remote().url,
-                results=results
+                results=results,
+                concept_scheme_uri=concept_scheme_uri,
             )
             update(query_str, sudo=True)
             logger.debug("Registered model metadata with SPARQL update: %s", query_str)
