@@ -58,10 +58,46 @@ class LlmConfig(BaseModel):
 class MLTrainingConfig(BaseModel):
     """Machine Learning training configuration."""
 
-    transformer: str = Field(
+    output_dir: str = Field(
+        default="./outputs/experiment",
+        description="Directory for training outputs and artifacts"
+    )
+    label_policy: Literal["all", "exclude_rejected"] = Field(
+        default="exclude_rejected",
+        description="Whether to keep labels rejected during human review"
+    )
+    min_label_samples: int = Field(default=1, ge=1)
+    negative_ratio: float | None = Field(default=None, gt=0)
+    test_size: float = Field(default=0.15, gt=0, lt=1)
+    validation_size: float = Field(default=0.15, gt=0, lt=1)
+    seed: int = Field(default=42)
+    model_name: str = Field(
         default="distilbert/distilbert-base-uncased",
         description="Base transformer model for fine-tuning"
     )
+    max_length: int = Field(default=512, ge=1)
+    lr_scheduler_type: str = Field(default="cosine")
+    num_train_epochs: int = Field(default=2, ge=1)
+    train_batch_size: int = Field(default=8, ge=1)
+    eval_batch_size: int = Field(default=16, ge=1)
+    gradient_accumulation_steps: int = Field(default=1, ge=1)
+    warmup_ratio: float = Field(default=0.0, ge=0, lt=1)
+    early_stopping_patience: int = Field(default=5, ge=1)
+    metric_for_best_model: str = Field(default="macro_average_precision")
+    loss: Literal["bce", "weighted_bce"] = Field(default="weighted_bce")
+    pos_weight_strategy: Literal["none", "full", "sqrt", "clipped"] = Field(default="none")
+    pos_weight_cap: float | None = Field(default=None, gt=0)
+    global_threshold_grid: list[float] = Field(default_factory=lambda: [0.5])
+    per_label_threshold_min_positives: int = Field(default=10, ge=1)
+    per_label_threshold_shrinkage: float = Field(default=0.35, ge=0, le=1)
+    eval_strategy: Literal["no", "steps", "epoch"] = Field(default="epoch")
+    save_strategy: Literal["no", "steps", "epoch"] = Field(default="epoch")
+    load_best_model_at_end: bool = True
+    greater_is_better: bool = True
+    save_total_limit: int = Field(default=2, ge=1)
+    logging_steps: int = Field(default=20, ge=1)
+    report_to: str = Field(default="none")
+
     learning_rate: float = Field(
         default=2e-5,
         gt=0,
@@ -70,7 +106,7 @@ class MLTrainingConfig(BaseModel):
     epochs: int = Field(
         default=2,
         ge=1,
-        description="Number of training epochs"
+        description="Deprecated alias for num_train_epochs"
     )
     weight_decay: float = Field(
         default=0.01,
@@ -85,6 +121,14 @@ class MLTrainingConfig(BaseModel):
         default=None,
         description="Target model ID on HuggingFace Hub"
     )
+    huggingface: dict[str, str | bool] = Field(default_factory=lambda: {
+        "repo_id": "your-organization/your-model-repository",
+        "repo_type": "model",
+        "private": False,
+        "commit_message": "Upload fine-tuned codelist classifier with model card",
+        "api_key_env_var": "HF_TOKEN",
+    })
+    model_registration: dict[str, str] = Field(default_factory=dict)
 
 
 class MLInferenceConfig(BaseModel):

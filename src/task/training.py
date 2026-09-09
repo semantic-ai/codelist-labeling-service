@@ -48,9 +48,9 @@ class ClassifierTrainingTask(CodeListTask):
             codelist_entries.get_labels(),
             ml_config.huggingface_output_model_id,
             concept_scheme_uri=codelist_entries.concept_scheme_uri,
-            transformer=ml_config.transformer,
+            transformer=ml_config.model_name,
             learning_rate=ml_config.learning_rate,
-            epochs=ml_config.epochs,
+            epochs=ml_config.num_train_epochs,
             weight_decay=ml_config.weight_decay,
         )
         logger.info("Completed classifier training task %s", self.task_uri)

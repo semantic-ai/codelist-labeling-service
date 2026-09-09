@@ -29,3 +29,5 @@ testing.ipynb
 docker-compose-standalone.yml
 test_task_flow.ipynb
 IMPLEMENTATION_AUDIT.md
+/outputs
+/training

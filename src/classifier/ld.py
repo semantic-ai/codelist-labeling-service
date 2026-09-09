@@ -73,13 +73,23 @@ def build_airo_model_insert_query(
     qm_line = f"dqv:hasQualityMeasurement {', '.join(qm_uris)} ;" if qm_uris else ""
     qm_nodes = "".join(qm_nodes_parts)
 
-    metric_definition = f"""
-    {sparql_escape_uri(METRIC_URIS['eval_accuracy'])} a dqv:Metric ;
-        rdfs:label \"Accuracy\" ;
-        rdfs:comment \"The aggregate accuracy of the codelist classifier.\" ;
+    metric_definitions = {
+        "eval_accuracy": ("Accuracy", "The aggregate accuracy of the codelist classifier.", "Accuracy"),
+        "eval_precision": ("Precision", "The aggregate precision of the codelist classifier.", "Precision"),
+        "eval_recall": ("Recall", "The aggregate recall of the codelist classifier.", "Recall"),
+        "eval_f1": ("F1 score", "The aggregate F1 score of the codelist classifier.", "F1Score"),
+    }
+    metric_definition = "\n".join(
+        f"""
+    {sparql_escape_uri(metric_uri)} a dqv:Metric ;
+        rdfs:label \"{label}\" ;
+        rdfs:comment \"{comment}\" ;
         dqv:expectedDataType xsd:decimal ;
-        dqv:inDimension {sparql_escape_uri(f'{DIMENSION_BASE}/Accuracy')} .
+        dqv:inDimension {sparql_escape_uri(f'{DIMENSION_BASE}/{dimension_name}')} .
 """
+        for metric_name, metric_uri in METRIC_URIS.items()
+        for label, comment, dimension_name in [metric_definitions[metric_name]]
+    )
 
     return prefixes + f"""
 INSERT DATA {{
