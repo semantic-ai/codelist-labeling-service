@@ -17,6 +17,7 @@ from decide_ai_service_base.ai_logging import record_llm_call
 
 from ..llm_models.llm_model_clients import create_llm_client
 from ..llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
+from ..llm_models.chunking import chunk_context_note, compute_budget, map_over_chunks
 from .codelist import Codelist, CodelistEntry, CodeListTask
 from ..config import get_config
 
@@ -47,6 +48,9 @@ class ModelAnnotatingTask(CodeListTask):
         self._provider = config.llm.provider
         self._model_name = config.llm.model_name
         self._endpoint = config.llm.base_url if config.llm.base_url else config.llm.provider
+        self._max_input_chars = config.llm.max_input_chars
+        self._chunk_overlap_chars = config.llm.chunk_overlap_chars
+        self._max_chunks = config.llm.max_chunks
 
         prompt = config.get_codelist_prompt(self._codelist_entries.concept_scheme_uri)
         self._llm_system_message = prompt.system_message
@@ -100,33 +104,36 @@ class ModelAnnotatingTask(CodeListTask):
         elif self._llm is None:
             raise RuntimeError(f"No LLM client available for decision {self.source}; cannot annotate.")
         else:
-            max_retries = 3
-            llm_input = LlmTaskInput(system_message=self._llm_system_message,
-                                     user_message=self._llm_user_message.format(
-                                         code_list=labels_for_prompt, decision_text=task_data),
-                                     assistant_message=None,
-                                     output_format=EntityLinkingTaskOutput)
+            labels_prompt = self._llm_user_message.format(
+                code_list=labels_for_prompt,
+                decision_text="",
+            )
+            budget = compute_budget(
+                self._max_input_chars,
+                len(self._llm_system_message) + len(labels_prompt),
+            )
 
+            def call_chunk(chunk: str, index: int, total: int) -> list[str]:
+                context_note = f"\n\n{chunk_context_note(index, total)}" if total > 1 else ""
+                user_message = self._llm_user_message.format(
+                    code_list=labels_for_prompt,
+                    decision_text=chunk,
+                ) + context_note
+                parsed, _raw_response = self._call_llm_with_retries(user_message)
+                return parsed.designated_classes
 
-            for attempt in range(1, max_retries + 1):
-                start = time.monotonic()
-                try:
-                    parsed, raw_response = self._llm.call_with_raw(llm_input)
-                    classes = parsed.designated_classes
-                    elapsed = time.monotonic() - start
-                    record_llm_call(
-                        self,
-                        self._endpoint,
-                        self._model_name,
-                        raw_response,
-                        elapsed,
-                    )
-                    break
-                except Exception as exc:
-                    if attempt == max_retries:
-                        raise RuntimeError(f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation.")
-                    logger.warning(f"LLM call attempt {attempt}/{max_retries} failed ({exc}); retrying.")
-                    time.sleep(attempt)
+            classes = map_over_chunks(
+                task_data,
+                budget,
+                call_chunk,
+                lambda results: list(dict.fromkeys(
+                    label for result in results for label in result
+                )),
+                overlap_chars=self._chunk_overlap_chars,
+                max_chunks=self._max_chunks,
+                delay_seconds=float(os.environ.get("RATE_LIMIT_DELAY_SECONDS", "0")),
+                label=f"decision {self.source}",
+            )
 
         logger.warning(f"LLM returned classes: {classes}")
 
@@ -157,6 +164,41 @@ class ModelAnnotatingTask(CodeListTask):
         print(f"Waiting for {rate_limit_delay} seconds to respect rate limits.", flush=True)
         if rate_limit_delay > 0:
             time.sleep(rate_limit_delay)
+
+    def _call_llm_with_retries(self, user_message: str):
+        max_retries = 3
+        llm_input = LlmTaskInput(
+            system_message=self._llm_system_message,
+            user_message=user_message,
+            assistant_message=None,
+            output_format=EntityLinkingTaskOutput,
+        )
+
+        for attempt in range(1, max_retries + 1):
+            start = time.monotonic()
+            try:
+                parsed, raw_response = self._llm.call_with_raw(llm_input)
+                elapsed = time.monotonic() - start
+                record_llm_call(
+                    self,
+                    self._endpoint,
+                    self._model_name,
+                    raw_response,
+                    elapsed,
+                )
+                return parsed, raw_response
+            except Exception as exc:
+                if attempt == max_retries:
+                    raise RuntimeError(
+                        f"LLM call failed after {max_retries} attempts ({exc}); skipping annotation."
+                    ) from exc
+                logger.warning(
+                    "LLM call attempt %d/%d failed (%s); retrying.",
+                    attempt,
+                    max_retries,
+                    exc,
+                )
+                time.sleep(attempt)
     
     def store_no_match(self):
         uri = f"http://mu.semte.ch/vocabularies/ext/no-match-found"

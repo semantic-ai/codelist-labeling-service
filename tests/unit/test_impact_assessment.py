@@ -39,6 +39,7 @@ from src.task.impact import (
     ImpactDirection,
     PolicyLabel,
     ProcessItem,
+    merge_impact_assessments,
 )
 
 from tests.unit.conftest import (
@@ -238,6 +239,51 @@ class TestFetchPolicyLabels:
         results = impact_task.fetch_policy_labels(EXPRESSION_URI)
 
         assert all(isinstance(r, PolicyLabel) for r in results)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# merge_impact_assessments
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _assessment(
+    direction: ImpactDirection,
+    confidence: ConfidenceLevel,
+    reasoning: str,
+    effect: str,
+) -> ImpactAssessment:
+    return ImpactAssessment(
+        label="Climate Action",
+        impact_direction=direction,
+        confidence=confidence,
+        reasoning=reasoning,
+        direct_effects=[effect],
+        second_order_effects=[],
+        key_uncertainties=[],
+        summary=reasoning,
+    )
+
+
+def test_merge_impact_assessments_uses_strict_majority_and_minimum_confidence():
+    result = merge_impact_assessments([
+        _assessment(ImpactDirection.POSITIVE, ConfidenceLevel.HIGH, "first", "shared"),
+        _assessment(ImpactDirection.POSITIVE, ConfidenceLevel.MEDIUM, "second", "shared"),
+        _assessment(ImpactDirection.NEGATIVE, ConfidenceLevel.HIGH, "third", "other"),
+    ])
+
+    assert result.impact_direction == ImpactDirection.POSITIVE
+    assert result.confidence == ConfidenceLevel.MEDIUM
+    assert result.direct_effects == ["shared", "other"]
+    assert result.reasoning == "Part 1/3: first\n\nPart 2/3: second\n\nPart 3/3: third"
+
+
+def test_merge_impact_assessments_returns_uncertain_for_tie():
+    result = merge_impact_assessments([
+        _assessment(ImpactDirection.POSITIVE, ConfidenceLevel.HIGH, "first", "one"),
+        _assessment(ImpactDirection.NEGATIVE, ConfidenceLevel.LOW, "second", "two"),
+    ])
+
+    assert result.impact_direction == ImpactDirection.UNCERTAIN
+    assert result.confidence == ConfidenceLevel.LOW
 
 
 # ─────────────────────────────────────────────────────────────────────────────

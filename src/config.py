@@ -53,6 +53,21 @@ class LlmConfig(BaseModel):
         ge=1,
         description="Request timeout in seconds"
     )
+    max_input_chars: int | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum document characters per LLM request; None disables chunking"
+    )
+    chunk_overlap_chars: int = Field(
+        default=0,
+        ge=0,
+        description="Character overlap between document chunks"
+    )
+    max_chunks: int = Field(
+        default=20,
+        ge=1,
+        description="Maximum number of document chunks to process"
+    )
 
 
 class MLTrainingConfig(BaseModel):
