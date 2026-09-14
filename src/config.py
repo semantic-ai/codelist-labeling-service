@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, SecretStr, ConfigDict, field_validator
+from pydantic import BaseModel, Field, SecretStr, ConfigDict, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Literal
 from decide_ai_service_base.config import load_config
@@ -55,6 +55,31 @@ class LlmConfig(BaseModel):
     )
 
 
+class HuggingFaceConfig(BaseModel):
+    """Authoritative Hugging Face publication settings."""
+
+    repo_id: str = Field(
+        min_length=3,
+        pattern=r"^[^/\s]+/[^/\s]+$",
+        description="Hugging Face repository ID in namespace/name form",
+    )
+    repo_type: Literal["model"] = "model"
+    private: bool = False
+    commit_message: str = Field(min_length=1)
+    api_key_env_var: str = Field(
+        default="HF_TOKEN",
+        min_length=1,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
+
+    @field_validator("commit_message", mode="before")
+    @classmethod
+    def normalize_commit_message(cls, value: str) -> str:
+        if not isinstance(value, str):
+            return value
+        return value.strip()
+
+
 class MLTrainingConfig(BaseModel):
     """Machine Learning training configuration."""
 
@@ -62,9 +87,9 @@ class MLTrainingConfig(BaseModel):
         default="./outputs/experiment",
         description="Directory for training outputs and artifacts"
     )
-    label_policy: Literal["all", "exclude_rejected"] = Field(
+    label_policy: Literal["all", "exclude_rejected", "approved_only"] = Field(
         default="exclude_rejected",
-        description="Whether to keep labels rejected during human review"
+        description="How human review votes determine eligible training records and labels"
     )
     min_label_samples: int = Field(default=1, ge=1)
     negative_ratio: float | None = Field(default=None, gt=0)
@@ -81,13 +106,12 @@ class MLTrainingConfig(BaseModel):
     train_batch_size: int = Field(default=8, ge=1)
     eval_batch_size: int = Field(default=16, ge=1)
     gradient_accumulation_steps: int = Field(default=1, ge=1)
-    warmup_ratio: float = Field(default=0.0, ge=0, lt=1)
     early_stopping_patience: int = Field(default=5, ge=1)
     metric_for_best_model: str = Field(default="macro_average_precision")
     loss: Literal["bce", "weighted_bce"] = Field(default="weighted_bce")
     pos_weight_strategy: Literal["none", "full", "sqrt", "clipped"] = Field(default="none")
     pos_weight_cap: float | None = Field(default=None, gt=0)
-    global_threshold_grid: list[float] = Field(default_factory=lambda: [0.5])
+    global_threshold_grid: list[float] = Field(default_factory=lambda: [0.5], min_length=1)
     per_label_threshold_min_positives: int = Field(default=10, ge=1)
     per_label_threshold_shrinkage: float = Field(default=0.35, ge=0, le=1)
     eval_strategy: Literal["no", "steps", "epoch"] = Field(default="epoch")
@@ -103,32 +127,40 @@ class MLTrainingConfig(BaseModel):
         gt=0,
         description="Learning rate for training"
     )
-    epochs: int = Field(
-        default=2,
-        ge=1,
-        description="Deprecated alias for num_train_epochs"
-    )
     weight_decay: float = Field(
         default=0.01,
         ge=0,
         description="Weight decay for regularization"
     )
-    huggingface_token: SecretStr | None = Field(
-        default=None,
-        description="HuggingFace API token for model upload"
-    )
-    huggingface_output_model_id: str | None = Field(
-        default=None,
-        description="Target model ID on HuggingFace Hub"
-    )
-    huggingface: dict[str, str | bool] = Field(default_factory=lambda: {
-        "repo_id": "your-organization/your-model-repository",
-        "repo_type": "model",
-        "private": False,
-        "commit_message": "Upload fine-tuned codelist classifier with model card",
-        "api_key_env_var": "HF_TOKEN",
-    })
+    huggingface: HuggingFaceConfig = Field(default_factory=lambda: HuggingFaceConfig(
+        repo_id="your-organization/your-model-repository",
+        repo_type="model",
+        private=False,
+        commit_message="Upload fine-tuned codelist classifier with model card",
+        api_key_env_var="HF__API_KEY",
+    ))
     model_registration: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("global_threshold_grid")
+    @classmethod
+    def validate_threshold_grid(cls, values: list[float]) -> list[float]:
+        if not values:
+            raise ValueError("global_threshold_grid must contain at least one threshold.")
+        if any(not 0.0 <= value <= 1.0 for value in values):
+            raise ValueError("global_threshold_grid values must be between 0 and 1.")
+        return values
+
+    @model_validator(mode="after")
+    def validate_cross_field_constraints(self):
+        if self.test_size + self.validation_size >= 1.0:
+            raise ValueError("test_size + validation_size must be less than 1.")
+        if self.pos_weight_strategy == "clipped" and (
+            self.pos_weight_cap is None or self.pos_weight_cap <= 0
+        ):
+            raise ValueError(
+                "pos_weight_cap must be positive when pos_weight_strategy is 'clipped'."
+            )
+        return self
 
 
 class MLInferenceConfig(BaseModel):

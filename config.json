@@ -17,11 +17,10 @@
     "model_name": "svercoutere/robbert-2023-dutch-base-abb",
     "max_length": 512,
     "lr_scheduler_type": "cosine",
-    "num_train_epochs": 50,
+    "num_train_epochs": 5,
     "train_batch_size": 8,
     "eval_batch_size": 16,
     "gradient_accumulation_steps": 4,
-    "warmup_ratio": 0.1,
     "early_stopping_patience": 5,
     "metric_for_best_model": "macro_average_precision",
     "loss": "weighted_bce",
@@ -38,22 +37,15 @@
     "logging_steps": 20,
     "report_to": "none",
     "learning_rate": 0.00002,
-    "epochs": 50,
     "weight_decay": 0.01,
-    "huggingface_token": null,
-    "huggingface_output_model_id": null,
     "huggingface": {
       "repo_id": "your-organization/your-model-repository",
       "repo_type": "model",
       "private": false,
       "commit_message": "Upload fine-tuned codelist classifier with model card",
-      "api_key_env_var": "HF_TOKEN"
+      "api_key_env_var": "HF__API_KEY"
     },
-    "model_registration": {
-      "commit_oid": "",
-      "hf_repo_url": "https://huggingface.co/your-organization/your-model-repository",
-      "concept_scheme_uri": "http://data.lblod.gift/id/conceptscheme/vap-klimaatadaptatie"
-    }
+    "model_registration": {}
   },
   "ml_inference": {
     "huggingface_model_id": null,
