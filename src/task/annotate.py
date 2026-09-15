@@ -17,7 +17,12 @@ from decide_ai_service_base.ai_logging import record_llm_call
 
 from ..llm_models.llm_model_clients import create_llm_client
 from ..llm_models.llm_task_models import LlmTaskInput, EntityLinkingTaskOutput
-from ..llm_models.chunking import chunk_context_note, compute_budget, map_over_chunks
+from ..utils.chunking import (
+    chunk_context_note,
+    compute_llm_chunk_budget,
+    estimate_tokens,
+    map_over_chunks,
+)
 from .codelist import Codelist, CodelistEntry, CodeListTask
 from ..config import get_config
 
@@ -48,7 +53,7 @@ class ModelAnnotatingTask(CodeListTask):
         self._provider = config.llm.provider
         self._model_name = config.llm.model_name
         self._endpoint = config.llm.base_url if config.llm.base_url else config.llm.provider
-        self._max_input_chars = config.llm.max_input_chars
+        self._max_chunking_length = config.llm.max_chunking_length
         self._chunk_overlap_chars = config.llm.chunk_overlap_chars
         self._max_chunks = config.llm.max_chunks
 
@@ -74,7 +79,7 @@ class ModelAnnotatingTask(CodeListTask):
             """
         ).substitute(
             source=sparql_escape_uri(self.source),
-            property=property_uri
+            property=sparql_escape_uri(property_uri)
         )
 
         response = query(q, sudo=True)
@@ -108,9 +113,20 @@ class ModelAnnotatingTask(CodeListTask):
                 code_list=labels_for_prompt,
                 decision_text="",
             )
-            budget = compute_budget(
-                self._max_input_chars,
-                len(self._llm_system_message) + len(labels_prompt),
+            prompt_overhead = self._llm_system_message + labels_prompt
+            budget = compute_llm_chunk_budget(
+                self._max_chunking_length,
+                prompt_overhead,
+            )
+
+            logger.info(
+                "Annotating input (chars=%d, max_input_tokens=%s, prompt_tokens=%d, "
+                "chunk_budget_chars=%s, max_chunks=%d)",
+                len(task_data),
+                self._max_chunking_length,
+                estimate_tokens(prompt_overhead),
+                budget,
+                self._max_chunks,
             )
 
             def call_chunk(chunk: str, index: int, total: int) -> list[str]:

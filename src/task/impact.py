@@ -10,7 +10,12 @@ from decide_ai_service_base.sparql_config import TASK_OPERATIONS, GRAPHS, get_pr
 from decide_ai_service_base.ai_logging import record_llm_call
 from .codelist import CodeListTask
 from ..llm_models.llm_model_clients import create_llm_client
-from ..llm_models.chunking import chunk_context_note, compute_budget, map_over_chunks
+from ..utils.chunking import (
+    chunk_context_note,
+    compute_llm_chunk_budget,
+    estimate_tokens,
+    map_over_chunks,
+)
 from ..config import get_config
 from langchain_core.messages import HumanMessage, SystemMessage
 from decide_ai_service_base.util import get_agent_uri
@@ -146,7 +151,7 @@ class ImpactAssessmentTask(CodeListTask):
         self.provider = config.llm.provider
         self._model_name = config.llm.model_name
         self._endpoint = config.llm.base_url if config.llm.base_url else config.llm.provider
-        self._max_input_chars = config.llm.max_input_chars
+        self._max_chunking_length = config.llm.max_chunking_length
         self._chunk_overlap_chars = config.llm.chunk_overlap_chars
         self._max_chunks = config.llm.max_chunks
 
@@ -334,13 +339,24 @@ class ImpactAssessmentTask(CodeListTask):
         ]
 
     def _process_single(self, process_item: ProcessItem, policy_label: PolicyLabel) -> tuple[ImpactAssessment, Any]:
-        prompt_overhead = len(
-            f"Policy text: \nLabel: {policy_label.policy_label}\n\n"
+        prompt_overhead = (
+            SYSTEM_PROMPT
+            + f"Policy text: \nLabel: {policy_label.policy_label}\n\n"
             "Provide a structured impact assessment."
         )
-        budget = compute_budget(
-            getattr(self, "_max_input_chars", None),
-            len(SYSTEM_PROMPT) + prompt_overhead,
+        budget = compute_llm_chunk_budget(
+            getattr(self, "_max_chunking_length", None),
+            prompt_overhead,
+        )
+
+        logger.info(
+            "Assessing impact input (chars=%d, max_input_tokens=%s, prompt_tokens=%d, "
+            "chunk_budget_chars=%s, max_chunks=%d)",
+            len(process_item.expression_content),
+            getattr(self, "_max_chunking_length", None),
+            estimate_tokens(prompt_overhead),
+            budget,
+            getattr(self, "_max_chunks", 20),
         )
 
         def assess_chunk(chunk: str, index: int, total: int) -> tuple[ImpactAssessment, Any]:

@@ -5,7 +5,7 @@
     "base_url": "https://api.mistral.ai/v1",
     "temperature": 0.0,
     "timeout": 120,
-    "max_input_chars": 48000,
+    "max_chunking_length": 2096,
     "chunk_overlap_chars": 0,
     "max_chunks": 20
   },
@@ -20,7 +20,8 @@
   "ml_inference": {
     "huggingface_model_id": null,
     "huggingface_token": null,
-    "confidence_threshold": 0.5
+    "confidence_threshold": 0.5,
+    "max_chunking_length": 512
   },
   "codelist_prompts": {
     "default": {
@@ -37,3 +38,5 @@
     }
   }
 }
+
+

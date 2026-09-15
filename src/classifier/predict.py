@@ -1,5 +1,10 @@
+import logging
+
 import torch
 import torch.nn.functional as F
+
+
+logger = logging.getLogger(__name__)
 
 
 def predict(
@@ -9,25 +14,43 @@ def predict(
     id2label: dict[int, str],
     problem_type: str,
     confidence_threshold: float = 0.5,
+    max_chunking_length: int = 512,
 ) -> list[tuple[str, float]]:
     """Run inference on a single text and return (label, confidence) pairs above threshold.
 
     Returns an empty list if no label exceeds the threshold.
     """
+    if max_chunking_length <= 0:
+        raise ValueError("max_chunking_length must be greater than zero.")
+
     length_check = tokenizer(text, return_tensors="pt", truncation=False)
-    if length_check["input_ids"].shape[-1] <= 512:
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+    input_token_count = length_check["input_ids"].shape[-1]
+    if input_token_count <= max_chunking_length:
+        inputs = tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=max_chunking_length,
+        )
     else:
         inputs = tokenizer(
             text,
             return_tensors="pt",
             truncation=True,
-            max_length=512,
+            max_length=max_chunking_length,
             return_overflowing_tokens=True,
             stride=64,
             padding=True,
         )
         inputs.pop("overflow_to_sample_mapping", None)
+
+    logger.info(
+        "Classifying input (chars=%d, tokens=%d, max_tokens=%d, windows=%d)",
+        len(text),
+        input_token_count,
+        max_chunking_length,
+        inputs["input_ids"].shape[0],
+    )
 
     with torch.no_grad():
         logits = model(**inputs).logits

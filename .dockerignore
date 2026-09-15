@@ -1,0 +1,26 @@
+# Source-control and local tooling
+.git/
+.vscode/
+.idea/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Training data, checkpoints, and generated model artifacts
+training/
+outputs/
+
+# Local databases and harvested data
+data/
+
+# Evaluation and development-only material
+evaluation/
+Documentation/
+tests/
+*.ipynb
+
+# Local environment and logs
+.env
+*.log

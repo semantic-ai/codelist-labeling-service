@@ -53,10 +53,10 @@ class LlmConfig(BaseModel):
         ge=1,
         description="Request timeout in seconds"
     )
-    max_input_chars: int | None = Field(
+    max_chunking_length: int | None = Field(
         default=None,
         gt=0,
-        description="Maximum document characters per LLM request; None disables chunking"
+        description="Approximate maximum input tokens per LLM request; None disables chunking"
     )
     chunk_overlap_chars: int = Field(
         default=0,
@@ -118,6 +118,11 @@ class MLInferenceConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description="Minimum confidence to emit an annotation"
+    )
+    max_chunking_length: int = Field(
+        default=512,
+        gt=0,
+        description="Maximum input token length for classifier inference"
     )
 
 
