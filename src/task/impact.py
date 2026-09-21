@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Any
 
@@ -9,6 +10,12 @@ from decide_ai_service_base.sparql_config import TASK_OPERATIONS, GRAPHS, get_pr
 from decide_ai_service_base.ai_logging import record_llm_call
 from .codelist import CodeListTask
 from ..llm_models.llm_model_clients import create_llm_client
+from ..utils.chunking import (
+    chunk_context_note,
+    compute_llm_chunk_budget,
+    estimate_tokens,
+    map_over_chunks,
+)
 from ..config import get_config
 from langchain_core.messages import HumanMessage, SystemMessage
 from decide_ai_service_base.util import get_agent_uri
@@ -18,6 +25,25 @@ from pydantic import BaseModel, Field
 from enum import Enum
 
 IMPACT_COMPONENT = "http://lblod.data.gift/id/components/impact-assessment/v1.0.0"
+
+SYSTEM_PROMPT = """
+You are a policy impact analyst specializing in sustainable development and governance.
+
+You will be given:
+1. A **policy text** — a description of a decision, regulation, or initiative
+2. A **label** — a classification (e.g. an SDG goal, a thematic domain) that has already been assigned to this policy
+
+Your task is to assess whether the impact of this policy on the given label's domain is **positive**, **negative**, **neutral** or **uncertain**.
+
+Follow this reasoning process:
+1. Identify the core intent and mechanisms of the policy
+2. Consider the specific scope and targets of the given label
+3. Assess direct effects first, then second-order effects
+4. Weigh both short-term and long-term consequences
+5. Conclude with an overall impact direction and confidence level (**low**, **medium** or **high**)
+
+Be precise, grounded, and concise. Avoid generic praise or criticism.
+"""
 
 class ImpactDirection(str, Enum):
     POSITIVE = "positive"
@@ -55,6 +81,62 @@ class PolicyLabel(BaseModel):
     policy_label: str
 
 
+def merge_impact_assessments(results: list[ImpactAssessment]) -> ImpactAssessment:
+    direction_counts = {
+        direction: sum(result.impact_direction == direction for result in results)
+        for direction in ImpactDirection
+        if direction != ImpactDirection.UNCERTAIN
+    }
+    winning_direction = ImpactDirection.UNCERTAIN
+    if results:
+        highest_count = max(direction_counts.values(), default=0)
+        winners = [direction for direction, count in direction_counts.items() if count == highest_count]
+        if highest_count and len(winners) == 1:
+            winning_direction = winners[0]
+
+    supporting = [
+        result for result in results
+        if result.impact_direction == winning_direction
+    ]
+    if not supporting:
+        supporting = results
+
+    confidence_order = {
+        ConfidenceLevel.LOW: 0,
+        ConfidenceLevel.MEDIUM: 1,
+        ConfidenceLevel.HIGH: 2,
+    }
+
+    def unique_values(field: str) -> list[str]:
+        values: list[str] = []
+        for result in results:
+            for value in getattr(result, field):
+                if value not in values:
+                    values.append(value)
+        return values
+
+    summary_result = max(
+        supporting,
+        key=lambda result: confidence_order[result.confidence],
+    )
+    return ImpactAssessment(
+        label=next((result.label for result in results if result.label), ""),
+        impact_direction=winning_direction,
+        confidence=min(
+            (result.confidence for result in supporting),
+            key=lambda confidence: confidence_order[confidence],
+        ),
+        reasoning="\n\n".join(
+            f"Part {index}/{len(results)}: {result.reasoning}"
+            for index, result in enumerate(results, start=1)
+        ),
+        direct_effects=unique_values("direct_effects"),
+        second_order_effects=unique_values("second_order_effects"),
+        key_uncertainties=unique_values("key_uncertainties"),
+        summary=summary_result.summary,
+    )
+
+
 class ImpactAssessmentTask(CodeListTask):
     """Task that assesses the policy impact direction (positive/negative/uncertain) of existing codelist annotations using an LLM."""
 
@@ -69,6 +151,9 @@ class ImpactAssessmentTask(CodeListTask):
         self.provider = config.llm.provider
         self._model_name = config.llm.model_name
         self._endpoint = config.llm.base_url if config.llm.base_url else config.llm.provider
+        self._max_chunking_length = config.llm.max_chunking_length
+        self._chunk_overlap_chars = config.llm.chunk_overlap_chars
+        self._max_chunks = config.llm.max_chunks
 
     def fetch_eli_expressions(self, target_graph: str | None = None) -> list[ProcessItem]:
         """
@@ -254,46 +339,68 @@ class ImpactAssessmentTask(CodeListTask):
         ]
 
     def _process_single(self, process_item: ProcessItem, policy_label: PolicyLabel) -> tuple[ImpactAssessment, Any]:
-        SYSTEM_PROMPT = """
-        You are a policy impact analyst specializing in sustainable development and governance.
-
-        You will be given:
-        1. A **policy text** — a description of a decision, regulation, or initiative
-        2. A **label** — a classification (e.g. an SDG goal, a thematic domain) that has already been assigned to this policy
-
-        Your task is to assess whether the impact of this policy on the given label's domain is **positive**, **negative**, **neutral** or **uncertain**.
-
-        Follow this reasoning process:
-        1. Identify the core intent and mechanisms of the policy
-        2. Consider the specific scope and targets of the given label
-        3. Assess direct effects first, then second-order effects
-        4. Weigh both short-term and long-term consequences
-        5. Conclude with an overall impact direction and confidence level (**low**, **medium** or **high**)
-
-        Be precise, grounded, and concise. Avoid generic praise or criticism.
-        """
-
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(
-                content=f"Policy text: {process_item.expression_content}\nLabel: {policy_label.policy_label}\n\nProvide a structured impact assessment."),
-        ]
-
-        start = time.monotonic()
-        out = self.llm.invoke(messages)
-        if out.get("parsing_error"):
-            raise RuntimeError(f"LLM parsing error: {out['parsing_error']}")
-        result = out["parsed"]
-        raw_response = out["raw"]
-        elapsed = time.monotonic() - start
-        record_llm_call(
-            self,
-            self._endpoint,
-            self._model_name,
-            raw_response,
-            elapsed,
+        prompt_overhead = (
+            SYSTEM_PROMPT
+            + f"Policy text: \nLabel: {policy_label.policy_label}\n\n"
+            "Provide a structured impact assessment."
         )
-        return result, raw_response
+        budget = compute_llm_chunk_budget(
+            self._max_chunking_length,
+            prompt_overhead,
+        )
+
+        logger.info(
+            "Assessing impact input (chars=%d, max_input_tokens=%s, prompt_tokens=%d, "
+            "chunk_budget_chars=%s, max_chunks=%d)",
+            len(process_item.expression_content),
+            self._max_chunking_length,
+            estimate_tokens(prompt_overhead),
+            budget,
+            self._max_chunks,
+        )
+
+        def assess_chunk(chunk: str, index: int, total: int) -> tuple[ImpactAssessment, Any]:
+            context_note = f"\n\n{chunk_context_note(index, total)}" if total > 1 else ""
+            messages = [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(
+                    content=(
+                        f"Policy text: {chunk}\nLabel: {policy_label.policy_label}\n\n"
+                        "Provide a structured impact assessment."
+                        f"{context_note}"
+                    )
+                ),
+            ]
+
+            start = time.monotonic()
+            out = self.llm.invoke(messages)
+            if out.get("parsing_error"):
+                raise RuntimeError(f"LLM parsing error: {out['parsing_error']}")
+            result = out["parsed"]
+            raw_response = out["raw"]
+            elapsed = time.monotonic() - start
+            record_llm_call(
+                self,
+                self._endpoint,
+                self._model_name,
+                raw_response,
+                elapsed,
+            )
+            return result, raw_response
+
+        return map_over_chunks(
+            process_item.expression_content,
+            budget,
+            assess_chunk,
+            lambda results: (
+                merge_impact_assessments([result for result, _raw in results]),
+                results[-1][1],
+            ),
+            overlap_chars=self._chunk_overlap_chars,
+            max_chunks=self._max_chunks,
+            delay_seconds=float(os.environ.get("RATE_LIMIT_DELAY_SECONDS", "0")),
+            label=f"impact assessment for {process_item.expression_uri}",
+        )
 
 
 

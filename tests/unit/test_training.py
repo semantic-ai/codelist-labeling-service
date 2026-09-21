@@ -55,6 +55,8 @@ from tests.unit.conftest import (
 OTHER_SCHEME_URI = "http://test.example.org/codelists/other-scheme"
 OTHER_CONCEPT_URI = "http://test.example.org/concepts/other-scheme-concept"
 OTHER_ANNOTATION_URI = "http://test.example.org/annotations/annotation-other"
+APPROVED_VOTE_URI = "http://mu.semte.ch/vocabularies/ext/annotation-review#approve"
+REJECTED_VOTE_URI = "http://mu.semte.ch/vocabularies/ext/annotation-review#reject"
 
 _PUBLIC_GRAPH = GRAPHS["public"]
 
@@ -201,6 +203,107 @@ def decision_with_two_task_scheme_classes(task_scheme_concepts):
         }}
     """)
     yield
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ClassifierTrainingTask.fetch_actions_with_classes()
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestFetchActionsWithClasses:
+
+    @staticmethod
+    def binding(action_uri, class_uri, vote_uri=None):
+        binding = {
+            "action": {"type": "uri", "value": action_uri},
+            "body": {"type": "uri", "value": class_uri},
+            "action_title": {"type": "literal", "value": "Example action"},
+        }
+        if vote_uri:
+            binding["voteLabel"] = {"type": "uri", "value": vote_uri}
+        return binding
+
+    def test_returns_all_labels_with_their_distinct_votes(self, training_task, mocker):
+        mocker.patch.object(
+            training_task,
+            "fetch_codelist_uri_for_task",
+            return_value=CONCEPT_SCHEME_URI,
+        )
+        query_mock = mocker.patch(
+            "src.task.training.query",
+            return_value={
+                "results": {
+                    "bindings": [
+                        self.binding(EXPRESSION_URI, CONCEPT_URI, APPROVED_VOTE_URI),
+                        self.binding(EXPRESSION_URI, CONCEPT_URI, REJECTED_VOTE_URI),
+                        self.binding(EXPRESSION_URI, CONCEPT_URI, APPROVED_VOTE_URI),
+                        self.binding(EXPRESSION_URI, CONCEPT_URI_2),
+                    ]
+                }
+            },
+        )
+
+        result = training_task.fetch_actions_with_classes()[0]
+
+        assert result["classes"] == [CONCEPT_URI, CONCEPT_URI_2]
+        assert result["label_votes"] == {
+            CONCEPT_URI: [APPROVED_VOTE_URI, REJECTED_VOTE_URI],
+            CONCEPT_URI_2: [],
+        }
+        query_text = query_mock.call_args.args[0]
+        assert "http://mu.semte.ch/graphs/public/human-validation" in query_text
+        assert "oa:hasTarget ?ann" in query_text
+
+    def test_keeps_no_match_sample_without_exposing_sentinel_as_label(
+        self, training_task, mocker
+    ):
+        mocker.patch.object(
+            training_task,
+            "fetch_codelist_uri_for_task",
+            return_value=CONCEPT_SCHEME_URI,
+        )
+        mocker.patch(
+            "src.task.training.query",
+            return_value={
+                "results": {
+                    "bindings": [
+                        self.binding(
+                            EXPRESSION_URI,
+                            "http://mu.semte.ch/vocabularies/ext/no-match-found",
+                        )
+                    ]
+                }
+            },
+        )
+
+        assert training_task.fetch_actions_with_classes() == [
+            {
+                "decision": EXPRESSION_URI,
+                "classes": [],
+                "label_votes": {},
+                "text": "Example action",
+            }
+        ]
+
+    def test_class_name_conversion_keeps_vote_keys_aligned(self):
+        samples = [{
+            "decision": EXPRESSION_URI,
+            "classes": [CONCEPT_URI],
+            "label_votes": {CONCEPT_URI: [APPROVED_VOTE_URI]},
+            "text": "Example action",
+        }]
+        codelist = Codelist([
+            CodelistEntry(uri=CONCEPT_URI, label="Affordable and Clean Energy"),
+        ])
+
+        result = ClassifierTrainingTask.convert_classes_to_original_names(
+            samples,
+            codelist,
+        )
+
+        assert result[0]["classes"] == ["Affordable and Clean Energy"]
+        assert result[0]["label_votes"] == {
+            "Affordable and Clean Energy": [APPROVED_VOTE_URI]
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -408,6 +511,7 @@ class TestProcess:
             CodelistEntry(uri=CONCEPT_URI, label="Affordable and Clean Energy"),
             CodelistEntry(uri=CONCEPT_URI_2, label="Climate Action"),
         ])
+        codelist.concept_scheme_uri = CONCEPT_SCHEME_URI
         return codelist
 
     @pytest.fixture
@@ -517,6 +621,24 @@ class TestProcess:
 
         passed_model_id = mock_train.call_args[0][2]
         assert passed_model_id == "test-org/test-model"
+
+    def test_train_receives_concept_scheme_uri(
+        self, training_task, mock_codelist, labeled_decisions, mock_config, mocker
+    ):
+        mocker.patch.object(training_task, "fetch_codelist", return_value=mock_codelist)
+        mocker.patch.object(
+            training_task, "fetch_decisions_with_classes", return_value=labeled_decisions
+        )
+        mocker.patch.object(
+            ClassifierTrainingTask, "convert_classes_to_original_names",
+            return_value=labeled_decisions,
+        )
+        mocker.patch("src.task.training.get_config", return_value=mock_config)
+        mock_train = mocker.patch("src.task.training.train")
+
+        training_task.process()
+
+        assert mock_train.call_args.kwargs["concept_scheme_uri"] == CONCEPT_SCHEME_URI
 
     def test_fetch_codelist_is_called_once(
         self, training_task, mock_codelist, labeled_decisions, mock_config, mocker

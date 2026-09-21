@@ -166,7 +166,13 @@ class ClassifierAnnotatingTask(CodeListTask):
             start = time.monotonic()
             try:
                 predictions = classifier_predict(
-                    text, model, tokenizer, id2label, problem_type, confidence_threshold
+                    text,
+                    model,
+                    tokenizer,
+                    id2label,
+                    problem_type,
+                    confidence_threshold,
+                    max_chunking_length=inference_cfg.max_chunking_length,
                 )
             except Exception as exc:
                 logger.error("Inference failed for %s: %s", uri, exc, exc_info=True)
