@@ -345,7 +345,7 @@ class ImpactAssessmentTask(CodeListTask):
             "Provide a structured impact assessment."
         )
         budget = compute_llm_chunk_budget(
-            getattr(self, "_max_chunking_length", None),
+            self._max_chunking_length,
             prompt_overhead,
         )
 
@@ -353,10 +353,10 @@ class ImpactAssessmentTask(CodeListTask):
             "Assessing impact input (chars=%d, max_input_tokens=%s, prompt_tokens=%d, "
             "chunk_budget_chars=%s, max_chunks=%d)",
             len(process_item.expression_content),
-            getattr(self, "_max_chunking_length", None),
+            self._max_chunking_length,
             estimate_tokens(prompt_overhead),
             budget,
-            getattr(self, "_max_chunks", 20),
+            self._max_chunks,
         )
 
         def assess_chunk(chunk: str, index: int, total: int) -> tuple[ImpactAssessment, Any]:
@@ -396,8 +396,8 @@ class ImpactAssessmentTask(CodeListTask):
                 merge_impact_assessments([result for result, _raw in results]),
                 results[-1][1],
             ),
-            overlap_chars=getattr(self, "_chunk_overlap_chars", 0),
-            max_chunks=getattr(self, "_max_chunks", 20),
+            overlap_chars=self._chunk_overlap_chars,
+            max_chunks=self._max_chunks,
             delay_seconds=float(os.environ.get("RATE_LIMIT_DELAY_SECONDS", "0")),
             label=f"impact assessment for {process_item.expression_uri}",
         )

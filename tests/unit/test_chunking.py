@@ -1,6 +1,6 @@
 import pytest
 
-from src.llm_models.chunking import (
+from src.utils.chunking import (
     compute_budget,
     map_over_chunks,
     merge_dict_of_lists,

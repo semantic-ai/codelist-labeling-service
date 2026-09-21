@@ -1,11 +1,6 @@
-import logging
-
 import torch
 import torch.nn.functional as F
-
-
-logger = logging.getLogger(__name__)
-
+from helpers import query, update, logger
 
 def predict(
     text: str,
