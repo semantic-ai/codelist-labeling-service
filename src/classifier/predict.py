@@ -1,6 +1,5 @@
 import torch
 import torch.nn.functional as F
-from helpers import query, update, logger
 
 def predict(
     text: str,
@@ -38,14 +37,6 @@ def predict(
             padding=True,
         )
         inputs.pop("overflow_to_sample_mapping", None)
-
-    logger.info(
-        "Classifying input (chars=%d, tokens=%d, max_tokens=%d, windows=%d)",
-        len(text),
-        input_token_count,
-        max_chunking_length,
-        inputs["input_ids"].shape[0],
-    )
 
     with torch.no_grad():
         logits = model(**inputs).logits
