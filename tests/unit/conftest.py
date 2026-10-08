@@ -22,6 +22,7 @@ from escape_helpers import sparql_escape_uri
 from pydantic import BaseModel, Field
 
 from decide_ai_service_base.sparql_config import GRAPHS
+from src.task.annotate import ANNOTATOR_COMPONENT
 from src.task.impact import (
     ImpactAssessmentTask,
     ConfidenceLevel,
@@ -46,13 +47,13 @@ CONCEPT_URI_2 = "http://test.example.org/concepts/sdg-goal-2"
 ANNOTATION_URI = "http://test.example.org/annotations/annotation-1"
 LANGUAGE_URI = "http://publications.europa.eu/resource/authority/language/ENG"
 
-# Agent provenance.  mock_agent_uri makes get_agent_uri("model_annotator")
+# Agent provenance.  mock_agent_uri makes get_agent_uri(ANNOTATOR_COMPONENT)
 # return AGENT_URI; write_agent_info would normally link it to COMPONENT_URI via
 # prov:specializationOf.  AGENT_URI_OTHER_CONFIG is what a config change mints:
 # a different agent URI specialising the SAME component.  AGENT_URI_FOREIGN
 # stands for anything else that writes classifying annotations (a human
 # validator, another service).
-COMPONENT_URI = "http://lblod.data.gift/id/components/codelist-labeling/v1.0.0/model_annotator"
+COMPONENT_URI = ANNOTATOR_COMPONENT
 COMPONENT_URI_FOREIGN = "http://lblod.data.gift/id/components/some-other-service/v1.0.0"
 AGENT_URI = "http://test.example.org/agents/model_annotator"
 AGENT_URI_OTHER_CONFIG = "http://test.example.org/agents/model_annotator-other-config"
@@ -183,6 +184,8 @@ def _wipe_test_data() -> None:
 def mock_agent_uri(mocker):
     """Mock get_agent_uri so tests don't require write_agent_info at startup."""
     def _fake(suffix):
+        if suffix == COMPONENT_URI:
+            return AGENT_URI
         return f"http://test.example.org/agents/{suffix}"
     mocker.patch("src.task.annotate.get_agent_uri", side_effect=_fake)
     mocker.patch("src.task.impact.get_agent_uri", side_effect=_fake)
