@@ -1,0 +1,52 @@
+name: docker
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TEST_IMAGE: ci-test-image
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Free disk space on the runner
+        run: |
+          echo "Before:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          echo "After:"
+          df -h /
+
+      - uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build -t "$TEST_IMAGE" .
+
+      - name: Run integration tests
+        run: docker compose -f docker-compose.test.yml run --rm tests
+
+      - name: Dump Virtuoso log on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs virtuoso
+
+      - name: Tear down the test stack
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
+      - name: Report disk usage
+        if: always()
+        run: df -h /
