@@ -1,0 +1,21 @@
+services:
+  # Some of the service's queries run without a GRAPH clause, relying on sparql-parser
+  # to inject graphs in production. There is no sparql-parser here, so this works only
+  # because this image unions the named graphs into the default graph.
+  virtuoso:
+    image: redpencil/virtuoso:1.4.0
+    environment:
+      SPARQL_UPDATE: "true"
+
+  tests:
+    image: ${TEST_IMAGE:?set TEST_IMAGE to the tag built by the workflow}
+    depends_on:
+      - virtuoso
+    working_dir: /app
+    environment:
+      MU_SPARQL_ENDPOINT: http://virtuoso:8890/sparql
+      MU_SPARQL_UPDATEPOINT: http://virtuoso:8890/sparql
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./pytest.ini:/app/pytest.ini:ro
+    command: ["uv", "run", "python", "-m", "pytest"]

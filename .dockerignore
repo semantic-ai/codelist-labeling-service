@@ -1,0 +1,4 @@
+tests
+pytest.ini
+requirements-test.txt
+.github
