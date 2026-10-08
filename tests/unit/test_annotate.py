@@ -125,7 +125,7 @@ def batch_task() -> ModelBatchAnnotatingTask:
 class TestModelAnnotatingTaskProcess:
 
     def test_inserts_annotation_when_llm_matches_single_class(
-        self, annotating_task, expression_content_triple
+        self, annotating_task, expression_content_triple, task_in_job_with_codelist
     ):
         """A single matching label returned by the LLM produces one annotation."""
         annotating_task._llm.call_with_raw.return_value = (
@@ -147,7 +147,7 @@ class TestModelAnnotatingTaskProcess:
         """)
 
     def test_inserts_one_annotation_per_matched_class(
-        self, annotating_task, expression_content_triple
+        self, annotating_task, expression_content_triple, task_in_job_with_codelist
     ):
         """Two matching labels produce two separate annotations."""
         annotating_task._llm.call_with_raw.return_value = (
@@ -161,7 +161,7 @@ class TestModelAnnotatingTaskProcess:
         assert count == 2
 
     def test_annotation_targets_source_expression(
-        self, annotating_task, expression_content_triple
+        self, annotating_task, expression_content_triple, task_in_job_with_codelist
     ):
         """The oa:hasTarget of every inserted annotation is the task's source URI."""
         annotating_task._llm.call_with_raw.return_value = (
@@ -180,7 +180,7 @@ class TestModelAnnotatingTaskProcess:
         """)
 
     def test_annotation_body_is_resolved_concept_uri(
-        self, annotating_task, expression_content_triple
+        self, annotating_task, expression_content_triple, task_in_job_with_codelist
     ):
         """The oa:hasBody of the annotation is the resolved SKOS concept URI."""
         annotating_task._llm.call_with_raw.return_value = (
@@ -200,7 +200,7 @@ class TestModelAnnotatingTaskProcess:
         """)
 
     def test_does_not_duplicate_annotation_on_repeated_call(
-        self, annotating_task, expression_content_triple
+        self, annotating_task, expression_content_triple, task_in_job_with_codelist
     ):
         """Calling process() twice produces exactly one annotation (idempotent guard)."""
         annotating_task._llm.call_with_raw.return_value = (
@@ -213,12 +213,13 @@ class TestModelAnnotatingTaskProcess:
 
         assert sparql_count_annotations(EXPRESSION_URI) == 1
 
-    def test_skips_llm_call_when_no_expression_content(self, annotating_task):
+    def test_fails_without_llm_call_when_no_expression_content(self, annotating_task):
         """
         When the source expression has no content in the triplestore, process()
-        logs a warning and returns without calling the LLM.
+        raises without calling the LLM.
         """
-        annotating_task.process()
+        with pytest.raises(RuntimeError, match="No task data found for decision"):
+            annotating_task.process()
 
         annotating_task._llm.assert_not_called()
         assert sparql_count_annotations(EXPRESSION_URI) == 0
@@ -227,21 +228,23 @@ class TestModelAnnotatingTaskProcess:
         self, annotating_task
     ):
         """No annotation is created when fetch_data() returns empty text."""
-        annotating_task.process()
+        with pytest.raises(RuntimeError, match="No task data found for decision"):
+            annotating_task.process()
 
         assert sparql_count_annotations(EXPRESSION_URI) == 0
 
-    def test_skips_llm_call_when_codelist_is_empty(
+    def test_fails_without_llm_call_when_codelist_is_empty(
         self, annotating_task, expression_content_triple, mocker
     ):
         """
-        When the codelist has no entries, process() logs an error and skips
-        the LLM call.
+        When the codelist has no entries, process() raises without calling
+        the LLM.
         """
         annotating_task._codelist_entries = Codelist([])
         annotating_task._label_to_uri = {}
 
-        annotating_task.process()
+        with pytest.raises(RuntimeError, match="No concepts found in codelist"):
+            annotating_task.process()
 
         annotating_task._llm.assert_not_called()
 
@@ -251,7 +254,8 @@ class TestModelAnnotatingTaskProcess:
         annotating_task._codelist_entries = Codelist([])
         annotating_task._label_to_uri = {}
 
-        annotating_task.process()
+        with pytest.raises(RuntimeError, match="No concepts found in codelist"):
+            annotating_task.process()
 
         assert sparql_count_annotations(EXPRESSION_URI) == 0
 
@@ -269,7 +273,7 @@ class TestModelAnnotatingTaskProcess:
         assert sparql_count_annotations(EXPRESSION_URI) == 0
 
     def test_skips_annotation_when_llm_returns_empty_list(
-        self, annotating_task, expression_content_triple
+        self, annotating_task, expression_content_triple, task_in_job_with_codelist
     ):
         """An empty designated_classes list creates a no-match annotation."""
         annotating_task._llm.call_with_raw.return_value = (
@@ -737,7 +741,7 @@ class TestFetchTextWithPropertyPath:
         assert result == ""
 
     def test_process_uses_property_path_when_set(
-        self, annotating_task, mocker
+        self, annotating_task, task_in_job_with_codelist, mocker
     ):
         """process() uses fetch_text_with_property_path when _property_path_for_text is set."""
         epvoc_content = "https://data.europarl.europa.eu/def/epvoc#expressionContent"
@@ -756,7 +760,7 @@ class TestFetchTextWithPropertyPath:
         assert sparql_count_annotations(EXPRESSION_URI) == 1
 
     def test_process_falls_back_to_fetch_data_when_no_property_path(
-        self, annotating_task, expression_content_triple
+        self, annotating_task, expression_content_triple, task_in_job_with_codelist
     ):
         """process() falls back to fetch_data() when _property_path_for_text is None."""
         annotating_task._property_path_for_text = None

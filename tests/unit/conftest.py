@@ -399,7 +399,8 @@ def annotation_triples():
 
     Graphs written:
         GRAPHS["ai"]      oa:Annotation
-        GRAPHS["public"]  skos:Concept
+        GRAPHS["public"]  skos:Concept, and the impact task enabled for the
+                          concept scheme
     """
     sparql_update(f"""
         INSERT DATA {{
@@ -415,6 +416,8 @@ def annotation_triples():
                     a {sparql_escape_uri(NS["skos"] + "Concept")} ;
                     {sparql_escape_uri(NS["skos"] + "inScheme")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} ;
                     {sparql_escape_uri(NS["skos"] + "prefLabel")} "Affordable and Clean Energy" .
+                {sparql_escape_uri(ImpactAssessmentTask.__task_type__)}
+                    {sparql_escape_uri(NS["ext"] + "isEnabledFor")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
             }}
         }}
     """)
@@ -440,6 +443,23 @@ def bare_annotation_triple():
 # ---------------------------------------------------------------------------
 # Triplestore data fixtures  (ModelAnnotatingTask / ModelBatchAnnotatingTask)
 # ---------------------------------------------------------------------------
+
+@pytest.fixture
+def task_in_job_with_codelist():
+    """
+    Makes TASK_URI part of a job with a codelist: LinkingAnnotation only
+    writes when its activity is dct:isPartOf something with ext:codelist.
+    """
+    sparql_update(f"""
+        INSERT DATA {{
+            GRAPH {sparql_escape_uri(GRAPHS["jobs"])} {{
+                {sparql_escape_uri(TASK_URI)} {sparql_escape_uri(NS["dct"] + "isPartOf")} {sparql_escape_uri(JOB_URI)} .
+                {sparql_escape_uri(JOB_URI)} {sparql_escape_uri(NS["ext"] + "codelist")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
+            }}
+        }}
+    """)
+    yield
+
 
 @pytest.fixture
 def expression_content_triple():

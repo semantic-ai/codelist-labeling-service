@@ -54,6 +54,7 @@ from tests.unit.conftest import (
     ImpactAssessmentOutput,
     sparql_ask,
     sparql_count,
+    sparql_update,
 )
 
 
@@ -118,13 +119,29 @@ class TestFetchEliExpressions:
 
         assert item.expression_content == EXPRESSION_CONTENT
 
-    def test_process_item_carries_language_uri(
+    def test_returns_an_expression_without_a_language(
         self, impact_task, mocker
     ):
-        self._setup_mocks(impact_task, mocker)
-        item = impact_task.fetch_eli_expressions()[0]
+        mocker.patch.object(
+            impact_task, "fetch_codelist_uri_for_task", return_value=CONCEPT_SCHEME_URI
+        )
+        mocker.patch(
+            "src.task.impact.query",
+            return_value={"results": {"bindings": [
+                {
+                    "expression": {"value": EXPRESSION_URI},
+                    "content": {"value": EXPRESSION_CONTENT},
+                    "work": {"value": WORK_URI},
+                }
+            ]}},
+        )
 
-        assert item.language == LANGUAGE_URI
+        results = impact_task.fetch_eli_expressions()
+
+        assert len(results) == 1
+        assert results[0].expression_uri == EXPRESSION_URI
+        assert results[0].expression_content == EXPRESSION_CONTENT
+        assert results[0].work_uri == WORK_URI
 
     def test_process_item_carries_work_uri(
         self, impact_task, mocker
@@ -206,7 +223,7 @@ class TestFetchPolicyLabels:
 
         assert label.policy_label == "Affordable and Clean Energy"
 
-    def test_returns_empty_list_when_no_annotations_exist(
+    def test_returns_empty_list_when_impact_is_not_enabled_for_the_codelist(
         self, impact_task, mocker
     ):
         mocker.patch.object(
@@ -216,6 +233,24 @@ class TestFetchPolicyLabels:
         results = impact_task.fetch_policy_labels(EXPRESSION_URI)
 
         assert results == []
+
+    def test_raises_when_impact_is_enabled_but_no_annotations_exist(
+        self, impact_task, mocker
+    ):
+        mocker.patch.object(
+            impact_task, "fetch_codelist_uri_for_task", return_value=CONCEPT_SCHEME_URI
+        )
+        sparql_update(f"""
+            INSERT DATA {{
+                GRAPH {sparql_escape_uri(GRAPHS["public"])} {{
+                    {sparql_escape_uri(ImpactAssessmentTask.__task_type__)}
+                        {sparql_escape_uri(NS["ext"] + "isEnabledFor")} {sparql_escape_uri(CONCEPT_SCHEME_URI)} .
+                }}
+            }}
+        """)
+
+        with pytest.raises(RuntimeError, match="No policy labels found for expression"):
+            impact_task.fetch_policy_labels(EXPRESSION_URI)
 
     def test_delegates_codelist_resolution_to_helper(
         self, impact_task, annotation_triples, mocker
@@ -505,11 +540,12 @@ class TestProcess:
     routing logic can be verified without live data or a real LLM.
     """
 
-    def test_skips_store_when_no_expressions(self, impact_task, mocker):
+    def test_fails_without_store_when_no_expressions(self, impact_task, mocker):
         mocker.patch.object(impact_task, "fetch_eli_expressions", return_value=[])
         mock_store = mocker.patch.object(impact_task, "store")
 
-        impact_task.process()
+        with pytest.raises(RuntimeError, match="No expressions found in input container"):
+            impact_task.process()
 
         mock_store.assert_not_called()
 
