@@ -26,7 +26,8 @@ Previously documented bugs (now fixed)
 """
 
 import pytest
-from unittest.mock import patch
+import logging
+from unittest.mock import ANY, MagicMock, patch
 from escape_helpers import sparql_escape_uri
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -203,6 +204,17 @@ class TestFetchPolicyLabels:
         assert all(isinstance(r, PolicyLabel) for r in results)
 
 
+@pytest.fixture(autouse=True)
+def mock_record_llm_call(mocker):
+    """Keep AI call triples out of the triplestore; tests can assert on the mock."""
+    return mocker.patch("src.task.impact.record_llm_call")
+
+
+def _llm_result(assessment, raw=None):
+    """Shape returned by with_structured_output(..., include_raw=True)."""
+    return {"raw": raw or MagicMock(), "parsed": assessment, "parsing_error": None}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # _process_single
 # ─────────────────────────────────────────────────────────────────────────────
@@ -217,7 +229,7 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _llm_result(sample_assessment)
 
         impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -230,7 +242,7 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _llm_result(sample_assessment)
 
         impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -246,7 +258,7 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _llm_result(sample_assessment)
 
         impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -260,7 +272,7 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _llm_result(sample_assessment)
 
         impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -274,7 +286,7 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _llm_result(sample_assessment)
 
         result = impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -288,7 +300,7 @@ class TestProcessSingle:
         sample_assessment,
     ):
         assert sample_assessment.impact_direction == ImpactDirection.POSITIVE
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _llm_result(sample_assessment)
 
         result = impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -308,7 +320,7 @@ class TestProcessSingle:
                 "summary": "The policy negatively affects clean energy access.",
             }
         )
-        impact_task.llm.invoke.return_value = negative_assessment
+        impact_task.llm.invoke.return_value = _llm_result(negative_assessment)
 
         result = impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -327,7 +339,7 @@ class TestProcessSingle:
                 "confidence": ConfidenceLevel.LOW,
             }
         )
-        impact_task.llm.invoke.return_value = uncertain_assessment
+        impact_task.llm.invoke.return_value = _llm_result(uncertain_assessment)
 
         result = impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -340,7 +352,7 @@ class TestProcessSingle:
         sample_policy_label,
         sample_assessment,
     ):
-        impact_task.llm.invoke.return_value = sample_assessment
+        impact_task.llm.invoke.return_value = _llm_result(sample_assessment)
 
         result = impact_task._process_single(sample_process_item, sample_policy_label)
 
@@ -516,3 +528,50 @@ class TestProcess:
         mock_store.assert_called_once_with(
             sample_policy_label.annotation_uri, sample_assessment
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _process_single – AI call recording
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestProcessSingleRecordsLlmCall:
+
+    def test_records_llm_call_after_successful_assessment(
+        self, impact_task, sample_process_item, sample_policy_label,
+        sample_assessment, mock_record_llm_call
+    ):
+        raw = MagicMock()
+        impact_task.llm.invoke.return_value = _llm_result(sample_assessment, raw)
+
+        result = impact_task._process_single(sample_process_item, sample_policy_label)
+
+        assert result is sample_assessment
+        mock_record_llm_call.assert_called_once_with(
+            impact_task, "http://llm.example.org", "test-model", raw, ANY
+        )
+
+    def test_raises_and_does_not_record_when_parsing_fails(
+        self, impact_task, sample_process_item, sample_policy_label,
+        mock_record_llm_call
+    ):
+        impact_task.llm.invoke.return_value = {
+            "raw": MagicMock(), "parsed": None, "parsing_error": ValueError("bad output"),
+        }
+
+        with pytest.raises(ValueError, match="bad output"):
+            impact_task._process_single(sample_process_item, sample_policy_label)
+
+        mock_record_llm_call.assert_not_called()
+
+    def test_assessment_returned_when_recording_raises(
+        self, impact_task, sample_process_item, sample_policy_label,
+        sample_assessment, mock_record_llm_call, caplog
+    ):
+        impact_task.llm.invoke.return_value = _llm_result(sample_assessment)
+        mock_record_llm_call.side_effect = RuntimeError("triplestore down")
+
+        with caplog.at_level(logging.WARNING):
+            result = impact_task._process_single(sample_process_item, sample_policy_label)
+
+        assert result is sample_assessment
+        assert "triplestore down" in caplog.text

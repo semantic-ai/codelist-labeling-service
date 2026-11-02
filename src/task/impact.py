@@ -1,5 +1,6 @@
 from helpers import query, update, logger
 from escape_helpers import sparql_escape_uri, sparql_escape_string
+import time
 from string import Template
 
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, GRAPHS, get_prefixes_for_query
@@ -8,6 +9,7 @@ from ..llm_models.llm_model_clients import create_llm_client
 from ..config import get_config
 from langchain_core.messages import HumanMessage, SystemMessage
 from decide_ai_service_base.util import get_agent_uri
+from decide_ai_service_base.ai_logging import record_llm_call
 
 
 from pydantic import BaseModel, Field
@@ -59,8 +61,11 @@ class ImpactAssessmentTask(CodeListTask):
     def __init__(self, task_uri: str):
         super().__init__(task_uri)
         config = get_config()
-        self.llm = create_llm_client(config.llm)._chat_model.with_structured_output(ImpactAssessment)
+        self.llm = create_llm_client(config.llm)._chat_model.with_structured_output(
+            ImpactAssessment, include_raw=True
+        )
         self.provider = config.llm.provider
+        self._llm_config = config.llm
 
     def fetch_eli_expressions(self, target_graph: str) -> list[ProcessItem]:
         """
@@ -232,7 +237,23 @@ class ImpactAssessmentTask(CodeListTask):
                 content=f"Policy text: {process_item.expression_content}\nLabel: {policy_label.policy_label}\n\nProvide a structured impact assessment."),
         ]
 
-        return self.llm.invoke(messages)
+        start = time.monotonic()
+        result = self.llm.invoke(messages)
+        elapsed = time.monotonic() - start
+        if result["parsed"] is None:
+            raise result["parsing_error"]
+
+        try:
+            record_llm_call(
+                self,
+                self._llm_config.base_url or self._llm_config.provider,
+                self._llm_config.model_name,
+                result["raw"],
+                elapsed,
+            )
+        except Exception as exc:
+            logger.warning("Could not record AI call for task %s: %s", self.task_uri, exc)
+        return result["parsed"]
 
 
 
