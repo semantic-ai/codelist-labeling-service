@@ -28,7 +28,7 @@ relevant named graphs before and after every test.  This catches:
 """
 
 import logging
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import helpers
 import pytest
@@ -81,7 +81,13 @@ def _make_config(provider: str = "ollama") -> AppConfig:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def annotating_task(mocker) -> ModelAnnotatingTask:
+def mock_record_llm_call(mocker):
+    """Keep AI call triples out of the triplestore; tests can assert on the mock."""
+    return mocker.patch("src.task.annotate.record_llm_call")
+
+
+@pytest.fixture
+def annotating_task(mocker, mock_record_llm_call) -> ModelAnnotatingTask:
     """
     ModelAnnotatingTask with:
       • source = EXPRESSION_URI  (skips DecisionTask.__init__ SPARQL call)
@@ -1044,3 +1050,56 @@ class TestMultiActionAnnotation:
         llm_input = annotating_task._llm.call_args[0][0]
         assert "ACT-1" in llm_input.user_message
         assert "ACT-2" in llm_input.user_message
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ModelAnnotatingTask – AI call recording
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestModelAnnotatingTaskRecordsLlmCall:
+
+    @pytest.fixture(autouse=True)
+    def _stub_annotation_writes(self, mocker):
+        mocker.patch("src.task.annotate.get_agent_uri", return_value="http://example.org/agent")
+        self.linking = mocker.patch("src.task.annotate.LinkingAnnotation")
+
+    def test_records_llm_call_once_after_successful_annotation(
+        self, annotating_task, expression_content_triple, mock_record_llm_call
+    ):
+        annotating_task._llm.return_value = {"EXPR-1": ["Affordable and Clean Energy"]}
+
+        annotating_task.process()
+
+        mock_record_llm_call.assert_called_once_with(
+            annotating_task,
+            annotating_task._llm_config.base_url,
+            "test-model",
+            annotating_task._llm.last_response,
+            ANY,
+        )
+        assert isinstance(mock_record_llm_call.call_args.args[4], float)
+
+    def test_records_once_when_first_attempt_raises_and_retry_succeeds(
+        self, mocker, annotating_task, expression_content_triple, mock_record_llm_call
+    ):
+        mocker.patch("src.task.annotate.time.sleep")
+        annotating_task._llm.side_effect = [
+            RuntimeError("boom"),
+            {"EXPR-1": ["Affordable and Clean Energy"]},
+        ]
+
+        annotating_task.process()
+
+        mock_record_llm_call.assert_called_once()
+
+    def test_annotation_still_written_when_recording_raises(
+        self, annotating_task, expression_content_triple, mock_record_llm_call, caplog
+    ):
+        annotating_task._llm.return_value = {"EXPR-1": ["Affordable and Clean Energy"]}
+        mock_record_llm_call.side_effect = RuntimeError("triplestore down")
+
+        with caplog.at_level(logging.WARNING):
+            annotating_task.process()
+
+        self.linking.return_value.add_to_triplestore_if_not_exists.assert_called_once()
+        assert "triplestore down" in caplog.text
