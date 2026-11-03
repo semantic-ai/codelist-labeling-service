@@ -40,3 +40,18 @@ def test_client_unwraps_single_key_object():
     result = client(make_list_task_input())
 
     assert result == ["Class A"]
+
+
+def test_call_stores_last_response():
+    response = SimpleNamespace(content='["Class A"]')
+
+    class StoringChatModel:
+        def invoke(self, messages):
+            return response
+
+    client = LangChainLlmClient(StoringChatModel())
+    assert client.last_response is None
+
+    client(make_list_task_input())
+
+    assert client.last_response is response

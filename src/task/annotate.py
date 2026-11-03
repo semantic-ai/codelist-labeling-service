@@ -8,6 +8,7 @@ from escape_helpers import sparql_escape_uri
 from decide_ai_service_base.sparql_config import TASK_OPERATIONS, AGENT_TYPES, get_prefixes_for_query, GRAPHS
 from decide_ai_service_base.annotation import LinkingAnnotation
 from decide_ai_service_base.util import get_agent_uri
+from decide_ai_service_base.ai_logging import record_llm_call
 
 from ..llm_models.llm_model_clients import create_llm_client
 from ..llm_models.llm_task_models import LlmTaskInput
@@ -41,6 +42,7 @@ class ModelAnnotatingTask(CodeListTask):
         # LLM setup
         self._llm = create_llm_client(config.llm)
         self._provider = config.llm.provider
+        self._llm_config = config.llm
 
         prompt = config.get_codelist_prompt(self._codelist_entries.concept_scheme_uri)
         self._llm_system_message = prompt.system_message
@@ -103,10 +105,12 @@ class ModelAnnotatingTask(CodeListTask):
 
             for attempt in range(1, max_retries + 1):
                 try:
+                    start = time.monotonic()
                     raw_response = self._llm(llm_input)
                     classifications = self._normalize_llm_response(
                         raw_response, action_codes
                     )
+                    elapsed = time.monotonic() - start
                     break
                 except Exception as exc:
                     if attempt == max_retries:
@@ -123,6 +127,17 @@ class ModelAnnotatingTask(CodeListTask):
                         exc,
                     )
                     time.sleep(attempt)
+
+            try:
+                record_llm_call(
+                    self,
+                    self._llm_config.base_url or self._llm_config.provider,
+                    self._llm_config.model_name,
+                    self._llm.last_response,
+                    elapsed,
+                )
+            except Exception as exc:
+                logger.warning("Could not record AI call for task %s: %s", self.task_uri, exc)
 
         logger.info(
             "[(check: %s) num_classifications=%d vs num_action_codes=%d ] Response=%s",

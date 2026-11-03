@@ -267,6 +267,9 @@ def impact_task() -> ImpactAssessmentTask:
     task.source_graph = None
     task.results_container_uris = []
     task.provider = "ollama"
+    task._llm_config = MagicMock(
+        base_url="http://llm.example.org", provider="ollama", model_name="test-model"
+    )
     task.llm = MagicMock()
     return task
 

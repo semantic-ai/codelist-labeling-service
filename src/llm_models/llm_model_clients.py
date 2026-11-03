@@ -19,6 +19,7 @@ class LangChainLlmClient:
 
     def __init__(self, chat_model):
         self._chat_model = chat_model
+        self.last_response = None
 
     def __call__(self, input: LlmTaskInput) -> Any:
         output_adapter = TypeAdapter(input.output_format)
@@ -33,6 +34,7 @@ class LangChainLlmClient:
         ]
 
         response = self._chat_model.invoke(messages)
+        self.last_response = response
         raw_text = response.content
         return self._parse_response(raw_text, output_adapter)
 
